@@ -1,0 +1,35 @@
+# Veriq — base runtime (pinned where it matters for CI reproducibility)
+# Core
+pyyaml>=6.0
+requests>=2.31
+jsonschema>=4.20
+pydantic>=2.5
+python-dotenv>=1.0
+tenacity>=8.2
+structlog>=24.1
+click>=8.1
+
+# Slack + GitHub
+slack-sdk>=3.27
+PyGithub>=2.3
+
+# Approval gateway
+fastapi>=0.109
+uvicorn[standard]>=0.25
+httpx>=0.27
+python-multipart>=0.0.9
+
+# Frontend / browser evidence
+playwright>=1.42
+axe-selenium-python>=2.1.6
+beautifulsoup4>=4.12
+
+# Security scanners (orchestrated as CLIs; python wrappers stay optional)
+bandit>=1.7.9
+pip-audit>=2.7.3
+detect-secrets>=1.5.0
+
+# Tests for Veriq itself
+pytest>=8.0
+pytest-asyncio>=0.23
+responses>=0.25

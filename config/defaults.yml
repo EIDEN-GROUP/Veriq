@@ -1,0 +1,49 @@
+version: 1
+agent:
+  enabled: true
+  model: auto
+  max_repair_attempts: 3
+  request_timeout_s: 120
+  max_nim_retries: 3
+audit:
+  architecture: true
+  bugs: true
+  security: true
+  dependencies: true
+  performance: true
+  frontend: auto
+  ui_ux: true
+  accessibility: true
+repair:
+  enabled: true
+  require_slack_approval: true
+  approval_timeout_minutes: 30
+  deny_paths:
+    - "**/migrations/**"
+    - "**/terraform/**"
+    - "**/iac/**"
+    - "**/*.pem"
+    - "**/*.key"
+    - ".env*"
+    - "**/secrets/**"
+  # Categories that always need admin (not just dev) approval:
+  require_admin_for:
+    - auth
+    - payments
+    - iam
+    - infrastructure
+notifications:
+  developer: true
+  administrator: true
+frontend:
+  enabled: auto
+  viewports:
+    desktop: [1440, 900]
+    tablet: [768, 1024]
+    mobile: [375, 812]
+  max_routes: 15
+  route_timeout_s: 30
+security:
+  block_on_critical: true
+observability:
+  event_log: true

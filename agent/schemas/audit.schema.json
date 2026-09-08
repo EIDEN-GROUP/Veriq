@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "VeriqAudit",
+  "type": "object",
+  "required": ["audit_id", "repository", "commit", "triggered_by", "overall_score", "findings", "severity_counts", "tests", "build", "security", "frontend", "fixes", "verification", "approval", "timestamps"],
+  "properties": {
+    "audit_id": {"type": "string"},
+    "repository": {"type": "string"},
+    "branch": {"type": "string"},
+    "commit": {"type": "string"},
+    "pr_number": {"type": ["integer", "null"]},
+    "triggered_by": {"type": "string"},
+    "slack_user": {"type": ["string", "null"]},
+    "overall_score": {"type": "integer", "minimum": 0, "maximum": 100},
+    "findings": {"type": "array", "items": {"$ref": "finding.schema.json"}},
+    "severity_counts": {"type": "object", "properties": {
+      "CRITICAL": {"type": "integer"}, "HIGH": {"type": "integer"},
+      "MEDIUM": {"type": "integer"}, "LOW": {"type": "integer"}, "INFO": {"type": "integer"}
+    }},
+    "tests": {"type": "object"},
+    "build": {"type": "object"},
+    "security": {"type": "object"},
+    "frontend": {"type": "object"},
+    "fixes": {"type": "object"},
+    "verification": {"type": "object"},
+    "approval": {"type": "object"},
+    "timestamps": {"type": "object"},
+    "artifacts": {"type": "array", "items": {"type": "string"}}
+  }
+}

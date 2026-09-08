@@ -1,0 +1,4 @@
+# Replace with your domain (an A record pointing at the VPS). Caddy fetches TLS certs automatically.
+veriq-gateway.example.com {
+	reverse_proxy gateway:8080
+}

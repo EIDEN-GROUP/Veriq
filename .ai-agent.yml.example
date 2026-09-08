@@ -1,0 +1,41 @@
+version: 1
+
+agent:
+  enabled: true
+  model: auto            # auto -> NIM_MODEL env, else fallback chain
+  max_repair_attempts: 3
+
+audit:
+  architecture: true
+  bugs: true
+  security: true
+  dependencies: true
+  performance: true
+  frontend: auto         # auto|enabled|disabled
+  ui_ux: true
+  accessibility: true
+
+repair:
+  enabled: true
+  require_slack_approval: true   # MUST stay true in production
+  approval_timeout_minutes: 30
+  # Paths the agent may never patch even with approval:
+  deny_paths:
+    - "**/migrations/**"
+    - "**/terraform/**"
+    - "**/*.pem"
+    - ".env*"
+
+notifications:
+  developer: true
+  administrator: true
+
+frontend:
+  enabled: auto
+  viewports:
+    desktop: [1440, 900]
+    tablet: [768, 1024]
+    mobile: [375, 812]
+
+security:
+  block_on_critical: true

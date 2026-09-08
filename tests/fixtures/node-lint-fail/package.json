@@ -1,0 +1,12 @@
+{
+  "name": "lint-fail-fixture",
+  "scripts": {
+    "lint": "eslint . --max-warnings=0",
+    "test": "node --test test/",
+    "build": "echo build-ok"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "eslint": "^9.0.0"
+  }
+}

@@ -1,0 +1,39 @@
+name: "Veriq AI Engineering Agent"
+description: "Reusable engineering verification agent: detect, evidence, NIM analysis, Slack approval, verified fix, audit."
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  working-directory:
+    description: "Directory of the target project to audit"
+    required: false
+    default: "."
+  approval-timeout-minutes:
+    description: "Slack approval wait window"
+    required: false
+    default: "30"
+  max-repair-attempts:
+    description: "Max fix+verify loops"
+    required: false
+    default: "3"
+  enable-repair:
+    description: "'true' to allow Slack-approved fixes"
+    required: false
+    default: "true"
+  frontend-mode:
+    description: "auto|enabled|disabled"
+    required: false
+    default: "auto"
+  gateway-url:
+    description: "Approval gateway base URL (for Slack interactive callbacks)"
+    required: false
+    default: ""
+  config-file:
+    description: "Optional repo .ai-agent.yml path"
+    required: false
+    default: ".ai-agent.yml"
+
+runs:
+  using: "docker"
+  image: "Dockerfile"

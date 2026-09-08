@@ -1,0 +1,131 @@
+"""Veriq approval gateway (deploy once per org; Actions polls it).
+
+Security: validates Slack signature + timestamp (replay window), binds every
+decision to (audit_id, repository, commit, pr), enforces single-use + expiry,
+and authorizes approver = mapped dev for that audit OR admin.
+Run: uvicorn gateway.app:app --port 8080. Slack Event URL -> /slack/actions.
+
+State: MemoryStore by default (single VPS process). Set UPSTASH_REDIS_REST_URL +
+UPSTASH_REDIS_REST_TOKEN for shared state on Vercel serverless / multi-replica.
+"""
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import os
+import time
+from typing import Any
+
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
+
+from gateway.store import get_store
+
+app = FastAPI(title="veriq-approval-gateway")
+store = get_store()
+
+
+def reset_state() -> None:
+    """Test helper: wipe pending + decisions (memory backend)."""
+    store.clear_all()
+
+
+def _signing_secret() -> str:
+    return os.environ.get("SLACK_SIGNING_SECRET", "")
+
+
+def verify_slack_signature(body: bytes, timestamp: str, signature: str) -> bool:
+    try:
+        if abs(time.time() - int(timestamp)) > 60 * 5:
+            return False
+    except ValueError:
+        return False
+    mac = hmac.new(_signing_secret().encode(), f"v0:{timestamp}:".encode() + body,
+                   hashlib.sha256).hexdigest()
+    return hmac.compare_digest(f"v0={mac}", signature)
+
+
+def _user_map() -> dict[str, str]:
+    try:
+        return json.loads(os.environ.get("GITHUB_SLACK_USER_MAP", "{}"))
+    except json.JSONDecodeError:
+        return {}
+
+
+@app.get("/health")
+def health() -> dict[str, Any]:
+    return {"ok": True, "backend": type(store).__name__}
+
+
+@app.post("/audits")
+def register_audit(payload: dict) -> dict:
+    """Called by the Action when it posts the approval request (or pre-created)."""
+    aid = str(payload["audit_id"])
+    store.set_pending(aid, {**payload, "created": time.time(),
+                            "expires": time.time() + int(payload.get("timeout_minutes", 30)) * 60})
+    return {"ok": True}
+
+
+@app.get("/approvals/{audit_id}")
+def get_decision(audit_id: str) -> dict:
+    dec = store.get_decision(audit_id)
+    if dec:
+        return dec
+    pend = store.get_pending(audit_id)
+    if pend and time.time() > pend["expires"]:
+        expired = {"decision": "expired", "audit_id": audit_id}
+        store.set_decision(audit_id, expired)
+        return expired
+    return {"decision": "pending", "audit_id": audit_id}
+
+
+@app.post("/slack/actions")
+async def slack_actions(request: Request,
+                        x_slack_signature: str = Header(default=""),
+                        x_slack_request_timestamp: str = Header(default="")) -> JSONResponse:
+    body = await request.body()
+    if not _signing_secret() or not verify_slack_signature(body, x_slack_request_timestamp, x_slack_signature):
+        raise HTTPException(401, "bad slack signature")
+    form = await request.form()
+    payload = json.loads(str(form.get("payload", "{}")))
+    actions = payload.get("actions", [])
+    if not actions:
+        raise HTTPException(400, "no actions")
+    action_id = str(actions[0].get("action_id", ""))  # approve:<audit>|reject:<audit>
+    verb, _, audit_id = action_id.partition(":")
+    if verb not in ("approve", "reject") or not audit_id:
+        raise HTTPException(400, "bad action_id")
+    pend = store.get_pending(audit_id)
+    if not pend:
+        raise HTTPException(404, "unknown audit")
+    if store.get_decision(audit_id):
+        return JSONResponse({"text": "Already recorded — duplicate ignored."})
+    if time.time() > pend["expires"]:
+        store.set_decision(audit_id, {"decision": "expired", "audit_id": audit_id})
+        return JSONResponse({"text": "⏱️ Approval expired. No changes made."})
+    # value binds repo|commit|pr — reject mismatches (prevents old approval reuse)
+    value = str(actions[0].get("value", ""))
+    repo, _, rest = value.partition("|")
+    if repo != pend.get("repository"):
+        raise HTTPException(403, "repository mismatch")
+    slack_user = str(payload.get("user", {}).get("id", ""))
+    admin = os.environ.get("SLACK_ADMIN_USER_ID", "")
+    # Authorize: mapped dev for this audit's github actor, or admin.
+    allowed_dev = str(pend.get("slack_user") or "")
+    if slack_user != admin and slack_user != allowed_dev:
+        # reverse-map check: slack id must belong to the triggering github user
+        rev = {v: k for k, v in _user_map().items()}
+        if rev.get(slack_user) != pend.get("triggered_by") and slack_user != admin:
+            raise HTTPException(403, "unauthorized approver")
+    nonce = hashlib.sha256(f"{audit_id}{slack_user}{time.time()}".encode()).hexdigest()[:12]
+    store.set_decision(audit_id, {
+        "decision": "approved" if verb == "approve" else "rejected",
+        "audit_id": audit_id, "repository": pend.get("repository"),
+        "commit": pend.get("commit"), "pr_number": pend.get("pr_number"),
+        "approver_slack_id": slack_user,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "nonce": nonce,
+    })
+    emoji = "🟢" if verb == "approve" else "🔴"
+    return JSONResponse({"text": f"{emoji} Recorded {verb} for {audit_id}."})

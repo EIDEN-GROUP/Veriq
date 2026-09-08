@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "VeriqFinding",
+  "type": "object",
+  "required": ["id", "severity", "category", "title", "description", "file", "line", "evidence", "recommendation", "auto_fixable", "confidence"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^[A-Z]+-[0-9]{3}$"},
+    "severity": {"type": "string", "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]},
+    "category": {"type": "string", "enum": ["code", "security", "dependencies", "tests", "build", "frontend", "ui_ux", "accessibility", "config"]},
+    "title": {"type": "string", "minLength": 5, "maxLength": 160},
+    "description": {"type": "string", "minLength": 10},
+    "file": {"type": "string"},
+    "line": {"type": ["integer", "null"]},
+    "evidence": {"type": "string", "description": "Verbatim tool output, DOM snippet, or trace. Empty allowed at schema level; agent_loop marks evidence-free findings needs_human_review + auto_fixable=false."},
+    "recommendation": {"type": "string"},
+    "auto_fixable": {"type": "boolean"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "needs_human_review": {"type": "boolean", "default": false}
+  }
+}

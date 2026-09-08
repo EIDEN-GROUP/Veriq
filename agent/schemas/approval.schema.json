@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "VeriqApproval",
+  "type": "object",
+  "required": ["audit_id", "repository", "commit", "action", "approver_slack_id", "timestamp"],
+  "properties": {
+    "audit_id": {"type": "string"},
+    "repository": {"type": "string"},
+    "commit": {"type": "string"},
+    "pr_number": {"type": ["integer", "null"]},
+    "action": {"type": "string", "enum": ["approve", "reject"]},
+    "approver_slack_id": {"type": "string"},
+    "approver_github": {"type": ["string", "null"]},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "nonce": {"type": "string"},
+    "expired": {"type": "boolean", "default": false}
+  }
+}

@@ -1,0 +1,85 @@
+name: Veriq AI Engineering Audit (reusable)
+
+# Consumed as: uses: EIDEN-GROUP/Veriq/.github/workflows/ai-audit.yml@v1, secrets: inherit
+on:
+  workflow_call:
+    inputs:
+      approval-timeout-minutes:
+        type: string
+        default: "30"
+      max-repair-attempts:
+        type: string
+        default: "3"
+      enable-repair:
+        type: string
+        default: "true"
+      frontend-mode:
+        type: string
+        default: "auto"
+      gateway-url:
+        type: string
+        default: ""
+    secrets:
+      NIM_API_KEY: { required: true }
+      NIM_BASE_URL: { required: false }
+      NIM_MODEL: { required: false }
+      SLACK_BOT_TOKEN: { required: true }
+      SLACK_SIGNING_SECRET: { required: true }
+      SLACK_ADMIN_USER_ID: { required: true }
+      GITHUB_SLACK_USER_MAP: { required: true }
+
+permissions:
+  contents: read
+  pull-requests: write   # single bot comment create/update
+  checks: write
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Fork safety: PR head is untrusted; secrets still available to THIS
+          # workflow context but repair is disabled for forks in orchestrator.
+
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm", cache-dependency-path: "**/package-lock.json" }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+
+      - name: Install deterministic scanners
+        run: |
+          pip install bandit pip-audit detect-secrets
+          curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/scripts/install.sh | bash
+
+      - name: Run Veriq audit
+        uses: ./
+        env:
+          NIM_API_KEY: ${{ secrets.NIM_API_KEY }}
+          NIM_BASE_URL: ${{ secrets.NIM_BASE_URL }}
+          NIM_MODEL: ${{ secrets.NIM_MODEL }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+          SLACK_ADMIN_USER_ID: ${{ secrets.SLACK_ADMIN_USER_ID }}
+          GITHUB_SLACK_USER_MAP: ${{ secrets.GITHUB_SLACK_USER_MAP }}
+          APPROVAL_GATEWAY_URL: ${{ inputs.gateway-url }}
+          AI_AGENT_MAX_REPAIR_ATTEMPTS: ${{ inputs.max-repair-attempts }}
+          AI_AGENT_APPROVAL_TIMEOUT: ${{ inputs.approval-timeout-minutes }}
+          AI_AGENT_ENABLE_REPAIR: ${{ inputs.enable-repair }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Upload audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: veriq-audit
+          path: |
+            artifacts/audit.json
+            artifacts/audit.md
+            artifacts/screenshots/
+            artifacts/slack-delivery-failed.json
+          if-no-files-found: warn

@@ -1,0 +1,26 @@
+# Veriq approval gateway on any VPS with Docker. Caddy terminates TLS automatically
+# (Slack requires a public https:// URL for interactive callbacks).
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    env_file: .gateway.env
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

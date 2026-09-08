@@ -1,0 +1,17 @@
+name: AI Engineering Agent (example caller — copy into your repo)
+
+# Usage: EIDEN-GROUP/Veriq must be tagged (v1) and org/repo secrets configured.
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ai-agent:
+    uses: EIDEN-GROUP/Veriq/.github/workflows/ai-audit.yml@v1
+    secrets: inherit
+    # with:
+    #   gateway-url: https://veriq-gateway.your-org.example
+    #   approval-timeout-minutes: "30"
+    #   max-repair-attempts: "3"

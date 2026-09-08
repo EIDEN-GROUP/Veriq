@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.env
+!.env.example
+.gateway.env
+!.gateway.env.example
+.vercel
+artifacts/
+audit-*.json
+screenshots/
+playwright-report/
+node_modules/
+.venv/
+dist/
