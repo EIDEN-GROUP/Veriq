@@ -1,0 +1,9 @@
+.git
+__pycache__/
+*.pyc
+.pytest_cache/
+artifacts/
+node_modules/
+.env
+.gateway.env
+tests/fixtures/**/node_modules/

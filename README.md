@@ -67,13 +67,19 @@ on:
 jobs:
   ai-agent:
     permissions:            # REQUIRED — must grant the scopes Veriq requests,
-      contents: read        # otherwise GitHub rejects the call with
+      contents: write       # otherwise GitHub rejects the call with
       pull-requests: write  # "...is only allowed actions: none, checks: none..."
       checks: write
       actions: read
     uses: EIDEN-GROUP/Veriq/.github/workflows/ai-audit.yml@v1
     secrets: inherit
 ```
+
+Veriq's audit runs from the published container image
+`ghcr.io/eiden-group/veriq:latest` (auto-built by
+`.github/workflows/docker-publish.yml`); the caller's checkout is mounted in,
+and a verified fix is pushed by the workflow to the `ai-agent/fix-*` bot branch
+never to your base branch (read-only automatically for forks).
 
 Full ready-to-copy template: `examples/ai-audit-caller.yml`.
 
@@ -294,6 +300,7 @@ python -m agent.orchestrator --target ../some-project --artifacts artifacts
 | `NIM_API_KEY not configured` | Secret missing → deterministic-only audit still completes |
 | Approval always expires | `gateway-url` unset or Slack Request URL wrong; check gateway logs |
 | `401 bad slack signature` | `SLACK_SIGNING_SECRET` mismatch or clock skew > 5 min |
+| Slack "didn't respond with the challenge" | gateway too old — redeploy; `/slack/actions` must echo `url_verification` challenges (fixed in `fix(gateway): echo Slack url_verification challenge...`) |
 | `403 unauthorized approver` | Clicker isn't the mapped dev or admin; extend `SLACK_USER_MAP` |
 | Frontend `unavailable` | No start script or port timeout; check `start_app` logs in artifacts |
 | Fork PR does nothing but audit | Intended: read-only on untrusted code |

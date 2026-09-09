@@ -18,7 +18,9 @@ def apply_patches_on_bot_branch(root: Path, audit: dict, patches: list[dict]) ->
     short = str(audit["commit"])[:7]
     branch = f"ai-agent/fix-{short}-{audit['audit_id'][-6:]}"
     subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True, timeout=30)
-    subprocess.run(["git", "checkout", "-b", branch], cwd=root, capture_output=True, text=True, timeout=60)
+    chk = subprocess.run(["git", "checkout", branch], cwd=root, capture_output=True, text=True, timeout=60)
+    if chk.returncode != 0:
+        subprocess.run(["git", "checkout", "-b", branch], cwd=root, capture_output=True, text=True, timeout=60)
     applied = []
     for p in patches:
         rel = str(p.get("path", ""))
@@ -35,8 +37,15 @@ def apply_patches_on_bot_branch(root: Path, audit: dict, patches: list[dict]) ->
         subprocess.run(["git", "add", "--", *applied], cwd=root, capture_output=True, timeout=30)
         subprocess.run(["git", "-c", "user.name=veriq-bot", "-c", "user.email=veriq-bot@users.noreply.github.com",
                         "commit", "-m", f"fix(ai-agent): resolve automated audit findings [{audit['audit_id']}]"],
-                       cwd=root, capture_output=True, timeout=60)
+                       cwd=root, capture_output=True, text=True, timeout=60)
+    else:
+        # Nothing changed: drop the empty branch we just made and return to the base commit.
+        subprocess.run(["git", "checkout", "-"], cwd=root, capture_output=True, timeout=30)
+        subprocess.run(["git", "branch", "-D", branch], cwd=root, capture_output=True, timeout=30)
+        return {"branch": "", "applied": [], "diff_stat": "no valid patch applied", "commit": ""}
     stat = subprocess.run(["git", "diff", "--stat", "HEAD~1"], cwd=root,
-                          capture_output=True, text=True, timeout=30) if applied else None
-    return {"branch": branch, "applied": applied,
-            "diff_stat": (stat.stdout if stat else "")[:2000]}
+                          capture_output=True, text=True, timeout=30)
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root,
+                          capture_output=True, text=True, timeout=30).stdout.strip()
+    return {"branch": branch if applied else "", "applied": applied,
+            "diff_stat": (stat.stdout if stat else "")[:2000], "commit": head}

@@ -29,10 +29,11 @@ on:
       SLACK_USER_MAP: { required: true }
 
 permissions:
-  contents: read
-  pull-requests: write   # single bot comment create/update
+  contents: write      # push ai-agent/fix-* branch (GitHub downgrades to read-only for fork PRs)
+  pull-requests: write # single bot comment create/update
   checks: write
   actions: read
+  packages: read       # pull ghcr.io/eiden-group/veriq audit image
 
 jobs:
   audit:
@@ -42,21 +43,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # Fork safety: PR head is untrusted; secrets still available to THIS
-          # workflow context but repair is disabled for forks in orchestrator.
+          # Fork safety: PR head is untrusted; orchestrator force-disables repair on forks
+          # and GitHub provides NO org secrets to fork PR runs, so nothing exfiltrates.
 
       - uses: actions/setup-node@v4
-        with: { node-version: "20", cache: "npm", cache-dependency-path: "**/package-lock.json" }
+        with: { node-version: "20" }
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
 
-      - name: Install deterministic scanners
-        run: |
-          pip install bandit pip-audit detect-secrets
-          curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/scripts/install.sh | bash
-
-      - name: Run Veriq audit
-        uses: ./
+      - name: Run Veriq audit (NIM, slack approval, fixes, artifacts)
         env:
           NIM_API_KEY: ${{ secrets.NIM_API_KEY }}
           NIM_BASE_URL: ${{ secrets.NIM_BASE_URL }}
@@ -71,6 +66,36 @@ jobs:
           AI_AGENT_ENABLE_REPAIR: ${{ inputs.enable-repair }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          docker pull ghcr.io/eiden-group/veriq:latest
+          docker run --rm \
+            -v "$PWD:/workspace" -w /workspace \
+            -e NIM_API_KEY -e NIM_BASE_URL -e NIM_MODEL \
+            -e SLACK_BOT_TOKEN -e SLACK_SIGNING_SECRET -e SLACK_ADMIN_USER_ID -e SLACK_USER_MAP \
+            -e APPROVAL_GATEWAY_URL -e AI_AGENT_MAX_REPAIR_ATTEMPTS -e AI_AGENT_APPROVAL_TIMEOUT \
+            -e AI_AGENT_ENABLE_REPAIR -e GITHUB_TOKEN -e GITHUB_REPOSITORY -e GITHUB_SHA \
+            -e GITHUB_REF_NAME -e GITHUB_ACTOR -e GITHUB_RUN_URL -e PR_NUMBER -e GITHUB_IS_FORK="$IS_FORK" \
+            --entrypoint bash ghcr.io/eiden-group/veriq:latest -lc \
+            "git config --global --add safe.directory /workspace && python -m agent.orchestrator --target . --artifacts artifacts"
+
+      - name: Push verified fixes to bot branch
+        if: always() && inputs.enable-repair == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH=$(python -c "import json;a=json.load(open('artifacts/audit.json'));print((a.get('fixes') or {}).get('branch',''))" 2>/dev/null || true)
+          if [ -n "$BRANCH" ] && [ "$BRANCH" != "None" ]; then
+            if git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${BRANCH}" 2>&1; then
+              echo "Pushed fixes to ${BRANCH}"
+            else
+              echo "::warning::Could not push ${BRANCH} (fork PR or read-only token — fixes live in the commit/artifacts only)"
+            fi
+          else
+            echo "No approved+committed fixes to push."
+          fi
 
       - name: Upload audit artifacts
         if: always()

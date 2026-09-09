@@ -278,7 +278,12 @@ def _run_fix_flow(audit: dict, loop: AgentLoop, policy: Policy, target: Path, cf
                 continue
             before = {"tests": audit["tests"].get("status"), "build": audit["build"].get("status")}
             res = apply_patches_on_bot_branch(target, audit, patches)
-            log_event("FIX_APPLIED", attempt=attempt, files=len(paths), branch=res.get("branch"))
+            if not res.get("branch"):
+                audit["fixes"]["failed"].append(f"attempt {attempt}: no patch applied")
+                continue
+            audit["fixes"]["branch"] = res["branch"]
+            audit["fixes"]["fix_commit"] = res.get("commit", "")
+            log_event("FIX_APPLIED", attempt=attempt, files=len(paths), branch=res["branch"])
             # Re-verify with deterministic tools against the REAL detected project
             from scanners.project_detector import detect_project as _detect, to_dict as _to_dict
             from scanners.test_runner import run_tests

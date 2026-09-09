@@ -15,10 +15,11 @@ on:
 jobs:
   ai-agent:
     permissions:
-      contents: read
-      pull-requests: write   # Veriq create/update its single bot comment
-      checks: write          # Veriq commit-status check
-      actions: read          # artifact/run links
+      contents: write      # lets Veriq push an ai-agent/fix-* branch after approval
+                           # (GitHub still forces read-only for fork PRs automatically)
+      pull-requests: write # Veriq create/update its single bot comment
+      checks: write        # Veriq commit-status check
+      actions: read        # artifact/run links
     uses: EIDEN-GROUP/Veriq/.github/workflows/ai-audit.yml@v1
     secrets: inherit
     # with:
