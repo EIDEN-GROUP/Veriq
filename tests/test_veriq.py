@@ -29,6 +29,25 @@ def test_secret_redaction():
 
 
 # ---------- permissions: dangerous behavior rejected ----------
+def test_slack_events_route_challenge_and_ack():
+    client, _ = _gw_client()
+    import os
+    os.environ["SLACK_SIGNING_SECRET"] = "s3cr3t"
+    chal = {"type": "url_verification", "challenge": "EVENTS-CHAL", "token": "t"}
+    r = client.post("/slack/events", json=chal)  # 404 before the fix
+    assert r.status_code == 200 and r.text == "EVENTS-CHAL"
+    body = json.dumps({"type": "event_callback", "event": {"type": "reaction_added"}})
+    r = client.post("/slack/events", content=body.encode(),
+                    headers={"Content-Type": "application/json"})
+    assert r.status_code == 401  # unsigned callbacks rejected
+    ts = str(int(time.time()))
+    mac = hmac.new(b"s3cr3t", f"v0:{ts}:{body}".encode(), hashlib.sha256).hexdigest()
+    r = client.post("/slack/events", content=body.encode(),
+                    headers={"Content-Type": "application/json",
+                             "X-Slack-Signature": f"v0={mac}", "X-Slack-Request-Timestamp": ts})
+    assert r.status_code == 200 and r.json()["ok"] is True
+
+
 def test_slack_url_verification_challenge_echoed():
     # Slack sends this when saving the Interactivity Request URL (may be unsigned).
     client, _ = _gw_client()

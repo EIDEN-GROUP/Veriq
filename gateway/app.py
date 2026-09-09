@@ -104,6 +104,21 @@ def get_decision(audit_id: str) -> dict:
     return {"decision": "pending", "audit_id": audit_id}
 
 
+@app.post("/slack/events")
+async def slack_events(request: Request,
+                       x_slack_signature: str = Header(default=""),
+                       x_slack_request_timestamp: str = Header(default="")) -> Response:
+    """Events-API-shaped endpoint (some Slack screens ask for /slack/events).
+    Echoes url_verification challenges; acks signed event callbacks; never mutates state."""
+    body = await request.body()
+    challenge = _challenge_from_body(body)
+    if challenge is not None:
+        return PlainTextResponse(challenge)
+    if not _signing_secret() or not verify_slack_signature(body, x_slack_request_timestamp, x_slack_signature):
+        raise HTTPException(401, "bad slack signature")
+    return JSONResponse({"ok": True})  # ack to prevent Slack retries; we use no events yet
+
+
 @app.post("/slack/actions")
 async def slack_actions(request: Request,
                         x_slack_signature: str = Header(default=""),
