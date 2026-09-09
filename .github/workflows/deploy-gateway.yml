@@ -72,6 +72,11 @@ jobs:
               echo "Disabling stock apache2 (OCI default page) so Caddy can bind 80/443..."
               sudo -n systemctl disable --now apache2
             fi
+            # A stray host-level caddy (systemd unit or manual start) also steals 80/443
+            # from the container. Disable + kill it, then recreate the stack cleanly.
+            sudo -n systemctl disable --now caddy >/dev/null 2>&1 || true
+            sudo -n pkill -x caddy || true
+            sleep 2
             # Secrets -> .gateway.env (printf avoids interpolation accidents with $ or quotes).
             umask 077
             printf 'SLACK_SIGNING_SECRET=%s\n' "$SLACK_SIGNING_SECRET" > .gateway.env
@@ -81,13 +86,18 @@ jobs:
             # Fresh Caddyfile is re-copied every deploy, so this substitution always matches.
             sed -i "s|veriq-gateway\.example\.com|$VPS_DOMAIN|" Caddyfile
             grep -q "$VPS_DOMAIN" Caddyfile
-            sudo -n docker compose up -d --build
+            sudo -n docker compose up -d --build --force-recreate
             sleep 8
             sudo -n docker compose exec -T gateway python -c \
               "import urllib.request; print(urllib.request.urlopen('http://localhost:8080/health', timeout=10).read().decode())"
             sudo -n docker compose ps
-            echo "Public check (needs DNS + open ports; non-fatal here):"
-            curl -fsS -m 15 "https://$VPS_DOMAIN/health" || echo "PUBLIC CHECK PENDING (DNS/ports?)"
+            echo "Public check (waits up to 2min for Let's Encrypt cert issuance):"
+            for i in $(seq 1 12); do
+              if curl -fsS -m 15 "https://$VPS_DOMAIN/health"; then echo " <- PUBLIC OK"; exit 0; fi
+              sleep 10
+            done
+            echo "::warning::Public HTTPS check still failing after 2min — check cloud firewall 443 + Caddy DNS logs"
+            exit 1
         env:
           VPS_DOMAIN: ${{ secrets.VPS_DOMAIN }}
           SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}

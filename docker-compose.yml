@@ -7,6 +7,8 @@ services:
       dockerfile: gateway/Dockerfile
     env_file: .gateway.env
     restart: unless-stopped
+    # OCI stub resolver (127.0.0.53) can be dead for container traffic -> pin public DNS
+    dns: ["1.1.1.1", "8.8.8.8"]
 
   caddy:
     image: caddy:2-alpine
@@ -20,6 +22,7 @@ services:
     depends_on:
       - gateway
     restart: unless-stopped
+    dns: ["1.1.1.1", "8.8.8.8"]
 
 volumes:
   caddy_data:
