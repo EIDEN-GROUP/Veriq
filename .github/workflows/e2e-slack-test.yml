@@ -28,7 +28,7 @@ jobs:
         with: { python-version: "3.12" }
       - name: Run E2E approval round-trip
         env:
-          SLACK_BOT_TOKEN: *** secrets.SLACK_BOT_TOKEN }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           APPROVAL_GATEWAY_URL: https://veriq.eiden-group.com
           TEST_USER: ${{ inputs.user_id }}
           TEST_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
