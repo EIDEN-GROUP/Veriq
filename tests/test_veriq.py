@@ -46,6 +46,11 @@ def test_slack_events_route_challenge_and_ack():
                     headers={"Content-Type": "application/json",
                              "X-Slack-Signature": f"v0={mac}", "X-Slack-Request-Timestamp": ts})
     assert r.status_code == 200 and r.json()["ok"] is True
+    # misrouted events onto /slack/actions must ack, not 400-loop retries
+    r = client.post("/slack/actions", content=body.encode(),
+                    headers={"Content-Type": "application/json",
+                             "X-Slack-Signature": f"v0={mac}", "X-Slack-Request-Timestamp": ts})
+    assert r.status_code == 200 and r.json()["ok"] is True
 
 
 def test_slack_url_verification_challenge_echoed():

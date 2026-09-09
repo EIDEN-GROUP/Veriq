@@ -135,6 +135,14 @@ async def slack_actions(request: Request,
         return PlainTextResponse(challenge)
     if not _signing_secret() or not verify_slack_signature(body, x_slack_request_timestamp, x_slack_signature):
         raise HTTPException(401, "bad slack signature")
+    # Misrouted Events API callbacks (event_callback JSON, signed): ack quietly once
+    # instead of 400-looping Slack retries. No side effects here either way.
+    try:
+        direct = json.loads(body.decode())
+    except ValueError:
+        direct = None
+    if isinstance(direct, dict) and direct.get("type") == "event_callback":
+        return JSONResponse({"ok": True})
     form = await request.form()
     try:
         payload = json.loads(str(form.get("payload", "{}")))
