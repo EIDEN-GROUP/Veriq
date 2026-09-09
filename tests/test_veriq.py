@@ -6,6 +6,7 @@ import hmac
 import json
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,21 @@ def test_secret_redaction():
 
 
 # ---------- permissions: dangerous behavior rejected ----------
+def test_slack_url_verification_challenge_echoed():
+    # Slack sends this when saving the Interactivity Request URL (may be unsigned).
+    client, _ = _gw_client()
+    chal = {"type": "url_verification", "challenge": "CHALLENGE-xyz-123", "token": "t"}
+    r = client.post("/slack/actions", json=chal)  # application/json shape
+    assert r.status_code == 200 and r.text == "CHALLENGE-xyz-123"
+    r = client.post("/slack/actions", content="payload=" + urllib.parse.quote(json.dumps(chal)),
+                    headers={"Content-Type": "application/x-www-form-urlencoded"})  # form shape
+    assert r.status_code == 200 and r.text == "CHALLENGE-xyz-123"
+    # A normal (non-challenge) POST without signature still gets 401 — echo is challenge-only.
+    r = client.post("/slack/actions", content="payload=%7B%22actions%22%3A%5B%5D%7D",
+                    headers={"Content-Type": "application/x-www-form-urlencoded"})
+    assert r.status_code in (400, 401)
+
+
 def test_dangerous_commands_and_paths_rejected():
     from agent.permissions import Policy, check_patch_allowed
     pol = Policy(deny_paths=["**/migrations/**", ".env*"], require_admin_for=["auth"])

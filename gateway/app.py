@@ -18,12 +18,36 @@ import time
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
 from gateway.store import get_store
 
 app = FastAPI(title="veriq-approval-gateway")
 store = get_store()
+
+
+def _challenge_from_body(body: bytes) -> str | None:
+    """Detect Slack's url_verification challenge in either JSON or form(payload) shape."""
+    candidates: list[dict] = []
+    try:
+        data = json.loads(body.decode() or "{}")
+        if isinstance(data, dict):
+            candidates.append(data)
+    except (ValueError, UnicodeDecodeError):
+        pass
+    try:
+        import urllib.parse
+        fields = {k: v[0] for k, v in urllib.parse.parse_qs(body.decode()).items()}
+        if "payload" in fields:
+            candidates.append(json.loads(fields["payload"]))
+        if "challenge" in fields:
+            candidates.append({"type": "url_verification", "challenge": fields["challenge"]})
+    except (ValueError, UnicodeDecodeError):
+        pass
+    for c in candidates:
+        if isinstance(c, dict) and c.get("type") == "url_verification" and c.get("challenge"):
+            return str(c["challenge"])
+    return None
 
 
 def reset_state() -> None:
@@ -83,8 +107,14 @@ def get_decision(audit_id: str) -> dict:
 @app.post("/slack/actions")
 async def slack_actions(request: Request,
                         x_slack_signature: str = Header(default=""),
-                        x_slack_request_timestamp: str = Header(default="")) -> JSONResponse:
+                        x_slack_request_timestamp: str = Header(default="")) -> Response:
     body = await request.body()
+    # Slack URL-verification challenge must be echoed back verbatim (sent when the
+    # Interactivity Request URL is saved; carries no side effects, so answer before
+    # signature checks -- it may legitimately arrive unsigned).
+    challenge = _challenge_from_body(body)
+    if challenge is not None:
+        return PlainTextResponse(challenge)
     if not _signing_secret() or not verify_slack_signature(body, x_slack_request_timestamp, x_slack_signature):
         raise HTTPException(401, "bad slack signature")
     form = await request.form()
