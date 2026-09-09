@@ -1,0 +1,38 @@
+name: Doctor — gateway VPS diagnostics
+
+# Manual-only. SSHes to the VPS and dumps ground truth about ports/containers.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  doctor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Diagnostics
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script_stop: true
+          script: |
+            echo "=== who owns 80/443 ==="
+            sudo ss -tlnp | grep -E ':(80|443)\b' || echo "nothing listening"
+            echo "=== all containers ==="
+            sudo docker ps -a
+            echo "=== port maps of caddy containers ==="
+            for c in $(sudo docker ps -a --format '{{.Names}}' | grep -i caddy); do
+              echo "-- $c"; sudo docker port "$c" || true; done
+            echo "=== compose stacks ==="
+            sudo docker compose ls || true
+            echo "=== deployed Caddyfile ==="
+            cat ~/veriq-gateway/Caddyfile
+            echo "=== caddy logs (last 25) ==="
+            sudo docker logs --tail 25 "$(sudo docker ps -a --format '{{.Names}}' | grep -i caddy | head -1)" 2>&1 || true
+            echo "=== local end-to-end probe ==="
+            curl -s -m 10 http://localhost/health -H "Host: $(awk '/\.com|\.net|\.org|\.io/ {print $1; exit}' ~/veriq-gateway/Caddyfile)" || true
+            sudo systemctl is-active apache2 nginx 2>&1 || true
