@@ -67,6 +67,11 @@ jobs:
             fi
             # Best-effort host firewall (cloud security lists still need 80/443 open — see README).
             sudo -n ufw allow 80,443/tcp >/dev/null 2>&1 || true
+            # OCI Ubuntu images ship stock Apache2 enabled, which steals 80/443 from Caddy.
+            if sudo -n systemctl is-active --quiet apache2; then
+              echo "Disabling stock apache2 (OCI default page) so Caddy can bind 80/443..."
+              sudo -n systemctl disable --now apache2
+            fi
             # Secrets -> .gateway.env (printf avoids interpolation accidents with $ or quotes).
             umask 077
             printf 'SLACK_SIGNING_SECRET=%s\n' "$SLACK_SIGNING_SECRET" > .gateway.env
