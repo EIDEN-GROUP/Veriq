@@ -1,0 +1,37 @@
+name: E2E Slack approval test
+
+# Manual only. Posts a REAL approval message (production code path) to a Slack user,
+# then waits for the 🟢/🔴 click round-tripping through the VPS gateway.
+# The gateway authorizes: clicking the OTHER buttons of this message also counts —
+# only the mapped dev (here: the E2E audit's slack_user) or the admin may decide.
+
+on:
+  workflow_dispatch:
+    inputs:
+      user_id:
+        description: "Slack user ID to DM the test approval request"
+        default: "U0AQWT35TP0"
+      timeout_minutes:
+        description: "Approval window (click before it expires; expired still exercises buttons)"
+        default: "5"
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Run E2E approval round-trip
+        env:
+          SLACK_BOT_TOKEN: *** secrets.SLACK_BOT_TOKEN }}
+          APPROVAL_GATEWAY_URL: https://veriq.eiden-group.com
+          TEST_USER: ${{ inputs.user_id }}
+          TEST_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python scripts/e2e_slack_test.py
