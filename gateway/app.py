@@ -45,8 +45,11 @@ def _challenge_from_body(body: bytes) -> str | None:
     except (ValueError, UnicodeDecodeError):
         pass
     for c in candidates:
-        if isinstance(c, dict) and c.get("type") == "url_verification" and c.get("challenge"):
-            return str(c["challenge"])
+        if isinstance(c, dict) and c.get("challenge"):
+            # Slack docs say type=url_verification, but observed saves omit it.
+            # A bare {"token","challenge"} must still echo, else Save sees only errors.
+            if c.get("type") == "url_verification" or "type" not in c:
+                return str(c["challenge"])
     return None
 
 
@@ -133,9 +136,17 @@ async def slack_actions(request: Request,
     if not _signing_secret() or not verify_slack_signature(body, x_slack_request_timestamp, x_slack_signature):
         raise HTTPException(401, "bad slack signature")
     form = await request.form()
-    payload = json.loads(str(form.get("payload", "{}")))
+    try:
+        payload = json.loads(str(form.get("payload", "{}")))
+    except ValueError:
+        # Never log payloads (they embed tokens); shape only, with sensitive keys dropped.
+        shape = {k: type(v).__name__ for k, v in form.items() if k != "payload"}
+        print(f"interactivity: unparseable payload shape={shape}")
+        raise HTTPException(400, "bad payload json")
     actions = payload.get("actions", [])
     if not actions:
+        print(f"interactivity: empty actions (type={payload.get('type')}, "
+              f"challenge={'challenge' in payload})")
         raise HTTPException(400, "no actions")
     action_id = str(actions[0].get("action_id", ""))  # approve:<audit>|reject:<audit>
     verb, _, audit_id = action_id.partition(":")

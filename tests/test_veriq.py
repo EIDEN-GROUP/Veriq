@@ -57,6 +57,9 @@ def test_slack_url_verification_challenge_echoed():
     r = client.post("/slack/actions", content="payload=" + urllib.parse.quote(json.dumps(chal)),
                     headers={"Content-Type": "application/x-www-form-urlencoded"})  # form shape
     assert r.status_code == 200 and r.text == "CHALLENGE-xyz-123"
+    no_type = {"token": "t", "challenge": "BARE-CHAL"}  # Slack save sometimes omits type
+    r = client.post("/slack/actions", json=no_type)
+    assert r.status_code == 200 and r.text == "BARE-CHAL"
     # A normal (non-challenge) POST without signature still gets 401 — echo is challenge-only.
     r = client.post("/slack/actions", content="payload=%7B%22actions%22%3A%5B%5D%7D",
                     headers={"Content-Type": "application/x-www-form-urlencoded"})
