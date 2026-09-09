@@ -48,7 +48,7 @@ def verify_slack_signature(body: bytes, timestamp: str, signature: str) -> bool:
 
 def _user_map() -> dict[str, str]:
     try:
-        return json.loads(os.environ.get("GITHUB_SLACK_USER_MAP", "{}"))
+        return json.loads(os.environ.get("SLACK_USER_MAP", "{}"))
     except json.JSONDecodeError:
         return {}
 

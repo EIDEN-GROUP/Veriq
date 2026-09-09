@@ -82,7 +82,7 @@ def _local_sha() -> str:
 
 def resolve_slack_user(github_user: str) -> str | None:
     try:
-        mapping = json.loads(os.environ.get("GITHUB_SLACK_USER_MAP", "{}"))
+        mapping = json.loads(os.environ.get("SLACK_USER_MAP", "{}"))
     except json.JSONDecodeError:
         log_event("USERMAP_INVALID_JSON")
         return None

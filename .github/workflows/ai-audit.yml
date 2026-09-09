@@ -26,7 +26,7 @@ on:
       SLACK_BOT_TOKEN: { required: true }
       SLACK_SIGNING_SECRET: { required: true }
       SLACK_ADMIN_USER_ID: { required: true }
-      GITHUB_SLACK_USER_MAP: { required: true }
+      SLACK_USER_MAP: { required: true }
 
 permissions:
   contents: read
@@ -64,7 +64,7 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
           SLACK_ADMIN_USER_ID: ${{ secrets.SLACK_ADMIN_USER_ID }}
-          GITHUB_SLACK_USER_MAP: ${{ secrets.GITHUB_SLACK_USER_MAP }}
+          SLACK_USER_MAP: ${{ secrets.SLACK_USER_MAP }}
           APPROVAL_GATEWAY_URL: ${{ inputs.gateway-url }}
           AI_AGENT_MAX_REPAIR_ATTEMPTS: ${{ inputs.max-repair-attempts }}
           AI_AGENT_APPROVAL_TIMEOUT: ${{ inputs.approval-timeout-minutes }}

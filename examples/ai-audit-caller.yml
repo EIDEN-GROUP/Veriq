@@ -1,0 +1,27 @@
+name: AI Engineering Agent
+
+# Copy this file into YOUR repository's .github/workflows/ (any name you like).
+# Requires: EIDEN-GROUP/Veriq tagged v1, org/repo secrets configured (README §4),
+# and the permissions block below — the reusable workflow requests write scopes
+# and the caller must grant them explicitly, or GitHub fails validation
+# ("is only allowed actions: none, checks: none, pull-requests: none").
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ai-agent:
+    permissions:
+      contents: read
+      pull-requests: write   # Veriq create/update its single bot comment
+      checks: write          # Veriq commit-status check
+      actions: read          # artifact/run links
+    uses: EIDEN-GROUP/Veriq/.github/workflows/ai-audit.yml@v1
+    secrets: inherit
+    # with:
+    #   gateway-url: https://veriq.eiden-group.com
+    #   approval-timeout-minutes: "30"
+    #   max-repair-attempts: "3"

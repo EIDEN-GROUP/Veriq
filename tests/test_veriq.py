@@ -163,7 +163,7 @@ def _slack_post(client, g, audit_id, user, verb, secret="s3cr3t", ts=None, repo=
     import os
     os.environ["SLACK_SIGNING_SECRET"] = secret
     os.environ["SLACK_ADMIN_USER_ID"] = "U0AQWT35TP0"
-    os.environ["GITHUB_SLACK_USER_MAP"] = json.dumps({"dev": "UDEV1"})
+    os.environ["SLACK_USER_MAP"] = json.dumps({"dev": "UDEV1"})
     g.store.set_pending(audit_id, {"audit_id": audit_id, "repository": repo, "commit": "abc",
                                        "pr_number": 1, "triggered_by": "dev", "slack_user": "UDEV1",
                                        "created": time.time(), "expires": time.time() + 600})

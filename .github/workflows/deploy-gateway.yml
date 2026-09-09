@@ -1,0 +1,90 @@
+# Deploys the Slack approval gateway to your VPS on every push to main
+# that touches the gateway (plus a manual "Run workflow" button).
+#
+# Required secrets in EIDEN-GROUP/Veriq (Settings -> Secrets and variables -> Actions):
+#   VPS_HOST              VPS public IP or hostname
+#   VPS_USER              SSH username (root, or a user with passwordless sudo)
+#   VPS_SSH_KEY           PRIVATE OpenSSH key for VPS_USER (the .pub half goes into ~/.ssh/authorized_keys)
+#   VPS_PORT              optional, defaults to 22
+#   VPS_DOMAIN            public domain pointing at the VPS (A record), e.g. veriq.example.com.
+#                         No domain? Use <ip-with-dashes>.nip.io, e.g. 130-61-22-10.nip.io (free TLS via Caddy).
+#   SLACK_SIGNING_SECRET  Slack app -> Basic Information -> Signing Secret
+#   SLACK_ADMIN_USER_ID   e.g. U0AQWT35TP0
+#   SLACK_USER_MAP        e.g. {"anynonenom":"U09D383NDSM","essafar-basma":"U0ASH084QKE","marouaneakrich":"U0AQWT35TP0"}
+#
+# You must open TCP 80 + 443 (and 22 for SSH) on the VPS first — see README §14.
+
+name: Deploy gateway to VPS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "gateway/**"
+      - "docker-compose.yml"
+      - "Caddyfile"
+      - "requirements-gateway.txt"
+      - ".github/workflows/deploy-gateway.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy gateway files to VPS
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          source: "gateway/,docker-compose.yml,Caddyfile,requirements-gateway.txt"
+          target: "~/veriq-gateway"
+
+      - name: Install Docker, configure and start gateway
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          envs: VPS_DOMAIN,SLACK_SIGNING_SECRET,SLACK_ADMIN_USER_ID,SLACK_USER_MAP
+          script: |
+            set -e
+            cd ~/veriq-gateway
+            if ! command -v docker >/dev/null 2>&1; then
+              echo "Installing Docker..."
+              curl -fsSL https://get.docker.com | sh
+            fi
+            if ! sudo -n docker compose version >/dev/null 2>&1; then
+              echo "Installing compose plugin..."
+              sudo apt-get update -qq && sudo apt-get install -y -qq docker-compose-plugin
+            fi
+            # Best-effort host firewall (cloud security lists still need 80/443 open — see README).
+            sudo -n ufw allow 80,443/tcp >/dev/null 2>&1 || true
+            # Secrets -> .gateway.env (printf avoids interpolation accidents with $ or quotes).
+            umask 077
+            printf 'SLACK_SIGNING_SECRET=%s\n' "$SLACK_SIGNING_SECRET" > .gateway.env
+            printf 'SLACK_ADMIN_USER_ID=%s\n' "$SLACK_ADMIN_USER_ID" >> .gateway.env
+            printf 'SLACK_USER_MAP=%s\n' "$SLACK_USER_MAP" >> .gateway.env
+            chmod 600 .gateway.env
+            # Fresh Caddyfile is re-copied every deploy, so this substitution always matches.
+            sed -i "s|veriq-gateway\.example\.com|$VPS_DOMAIN|" Caddyfile
+            grep -q "$VPS_DOMAIN" Caddyfile
+            sudo -n docker compose up -d --build
+            sleep 8
+            sudo -n docker compose exec -T gateway python -c \
+              "import urllib.request; print(urllib.request.urlopen('http://localhost:8080/health', timeout=10).read().decode())"
+            sudo -n docker compose ps
+            echo "Public check (needs DNS + open ports; non-fatal here):"
+            curl -fsS -m 15 "https://$VPS_DOMAIN/health" || echo "PUBLIC CHECK PENDING (DNS/ports?)"
+        env:
+          VPS_DOMAIN: ${{ secrets.VPS_DOMAIN }}
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+          SLACK_ADMIN_USER_ID: ${{ secrets.SLACK_ADMIN_USER_ID }}
+          SLACK_USER_MAP: ${{ secrets.SLACK_USER_MAP }}

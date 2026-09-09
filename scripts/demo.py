@@ -87,7 +87,7 @@ def main() -> int:
 
         # 5. APPROVE via gateway (real signature path)
         os.environ.update({"SLACK_SIGNING_SECRET": "demo-secret", "SLACK_ADMIN_USER_ID": "U0AQWT35TP0",
-                           "GITHUB_SLACK_USER_MAP": json.dumps({"anynonenom": "U09D383NDSM"})})
+                           "SLACK_USER_MAP": json.dumps({"anynonenom": "U09D383NDSM"})})
         from fastapi.testclient import TestClient
         import gateway.app as gw
         from slack.approval import wait_for_decision

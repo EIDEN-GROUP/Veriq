@@ -66,9 +66,16 @@ on:
 
 jobs:
   ai-agent:
+    permissions:            # REQUIRED — must grant the scopes Veriq requests,
+      contents: read        # otherwise GitHub rejects the call with
+      pull-requests: write  # "...is only allowed actions: none, checks: none..."
+      checks: write
+      actions: read
     uses: EIDEN-GROUP/Veriq/.github/workflows/ai-audit.yml@v1
     secrets: inherit
 ```
+
+Full ready-to-copy template: `examples/ai-audit-caller.yml`.
 
 Configurable inputs: `approval-timeout-minutes` (default `30`), `max-repair-attempts`
 (default `3`), `enable-repair` (`true`), `frontend-mode` (`auto`), `gateway-url`
@@ -88,7 +95,7 @@ enable/disable audit areas, repair policy, `deny_paths`, viewport sizes,
 | `SLACK_BOT_TOKEN` | Slack app bot token |
 | `SLACK_SIGNING_SECRET` | Slack app signing secret (gateway verifies every callback) |
 | `SLACK_ADMIN_USER_ID` | `U0AQWT35TP0` |
-| `GITHUB_SLACK_USER_MAP` | `{"anynonenom":"U09D383NDSM","essafar-basma":"U0ASH084QKE","marouaneakrich":"U0AQWT35TP0"}` |
+| `SLACK_USER_MAP` | `{"anynonenom":"U09D383NDSM","essafar-basma":"U0ASH084QKE","marouaneakrich":"U0AQWT35TP0"}` |
 
 For local dev copy `.env.example` → `.env` (gitignored). The user map is never logged.
 
@@ -110,7 +117,7 @@ For local dev copy `.env.example` → `.env` (gitignored). The user map is never
 1. Create a Slack app: `chat:write` bot scope, install to workspace, save token/secret.
 2. Deploy the gateway **once per org** (any host with a public URL):
    `pip install -r requirements.txt && uvicorn gateway.app:app --port 8080`.
-   Set its env: `SLACK_SIGNING_SECRET`, `SLACK_ADMIN_USER_ID`, `GITHUB_SLACK_USER_MAP`.
+   Set its env: `SLACK_SIGNING_SECRET`, `SLACK_ADMIN_USER_ID`, `SLACK_USER_MAP`.
 3. In Slack app settings → Interactivity → Request URL: `https://<gateway>/slack/actions`.
 4. Pass the gateway URL as `gateway-url` input (or `APPROVAL_GATEWAY_URL` env).
 5. How approval works: the Action first registers the audit binding with the gateway
@@ -192,23 +199,50 @@ Deploy the gateway (§6 / §14) and set `gateway-url` in callers. Version with t
 The gateway needs a **public `https://` URL** (Slack only delivers button clicks to public
 HTTPS). Two free-friendly options. Env vars for both are listed in `.gateway.env.example`.
 
-### Option A — Free VPS (recommended: persistent, no sleep, no extra state)
+### Option A — VPS with auto-deploy (recommended: persistent, no sleep, no extra state)
 
 Best free choice: **Oracle Cloud Always-Free** Ampere VM (4 CPU / 24 GB, free forever),
-or any VPS with ports 80/443. MemoryStore is used — no Redis needed.
+or any VPS. MemoryStore is used — no Redis needed. Deploys happen automatically via
+`.github/workflows/deploy-gateway.yml` (push to `main`, or manual Run workflow).
 
-```bash
-# 1. Point DNS: A record veriq-gateway.<your-domain> -> VPS IP
-# 2. On the VPS:
-sudo apt update && sudo apt install -y docker.io docker-compose-plugin git
-git clone https://github.com/EIDEN-GROUP/Veriq.git && cd Veriq
-cp .gateway.env.example .gateway.env   # fill SLACK_SIGNING_SECRET (never commit)
-sed -i 's/veriq-gateway.example.com/veriq-gateway.<your-domain>/' Caddyfile
-sudo docker compose up -d --build
-curl http://localhost:8080/health   # via container; Caddy serves https:// publicly
-```
+**What you do (one time, ~10 minutes):**
 
-Update on new releases: `git pull && sudo docker compose up -d --build`.
+1. **VPS access.** Note the IP + SSH username. If your key pair was generated for the
+   cloud console, make sure the *private* key is at hand.
+2. **Secrets in `EIDEN-GROUP/Veriq`** (Settings → Secrets and variables → Actions → New
+   repository secret). All 8:
+   `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` (whole private key incl.
+   `-----BEGIN/END OPENSSH PRIVATE KEY-----`), `VPS_DOMAIN` (see step 3),
+   `SLACK_SIGNING_SECRET`, `SLACK_ADMIN_USER_ID` (`U0AQWT35TP0`), `SLACK_USER_MAP`
+   (the JSON map from §4). Optional: `VPS_PORT` (default 22).
+   `VPS_USER` must be `root` or have **passwordless sudo** (`echo "$USER ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/$USER`).
+3. **Domain.** Either an A record `veriq-gateway.<your-domain>` → VPS IP, or with no
+   domain at all use `<ip-with-dashes>.nip.io` (e.g. `130-61-22-10.nip.io`) — Caddy
+   still gets a real TLS cert for it. Put the result in `VPS_DOMAIN`.
+4. **Open ports TCP 80 + 443** (22 for SSH is presumably already open):
+   ```bash
+   # Generic Ubuntu with UFW:
+   sudo ufw allow 80,443/tcp && sudo ufw reload
+   # Oracle Cloud Ubuntu image (iptables + cloud security list):
+   sudo iptables -I INPUT -p tcp --dport 80 -j ACCEPT
+   sudo iptables -I INPUT -p tcp --dport 443 -j ACCEPT
+   sudo apt install -y iptables-persistent && sudo netfilter-persistent save
+   ```
+   Plus in the cloud console (Oracle: Networking → VCN → Security List → Add Ingress
+   Rules) allow `0.0.0.0/0` on TCP 80 and 443. No ingress rule = Caddy can never be
+   reached, even with the VM firewall open.
+5. **Push.** `git push origin main` (or Actions → Deploy gateway to VPS → Run workflow).
+   The workflow copies the files, installs Docker if missing, writes `.gateway.env`
+   from secrets, and starts `gateway + Caddy`. It ends with a container health check
+   and a public `https://<domain>/health` check.
+6. **Wire Slack.** App → Interactivity → Request URL `https://<VPS_DOMAIN>/slack/actions`.
+   Caller workflows get `gateway-url: https://<VPS_DOMAIN>`. Press 🟢 on a test audit.
+
+**Manual fallback** (same result, no GitHub): copy `gateway/`, `docker-compose.yml`,
+`Caddyfile`, `requirements-gateway.txt` to `~/veriq-gateway` on the VPS, create
+`.gateway.env` from `.gateway.env.example`, set your domain in `Caddyfile`, then
+`sudo docker compose up -d --build`. Update later with `git pull`-style re-copy +
+`sudo docker compose up -d --build`.
 
 ### Option B — Vercel + Upstash Redis (easiest, serverless free tiers)
 
@@ -221,7 +255,7 @@ npm i -g vercel
 vercel link   # or: import EIDEN-GROUP/Veriq in the Vercel dashboard
 vercel env add SLACK_SIGNING_SECRET
 vercel env add SLACK_ADMIN_USER_ID            # U0AQWT35TP0
-vercel env add GITHUB_SLACK_USER_MAP          # the JSON map from §4
+vercel env add SLACK_USER_MAP          # the JSON map from §4
 vercel env add UPSTASH_REDIS_REST_URL         # from Upstash console
 vercel env add UPSTASH_REDIS_REST_TOKEN
 vercel --prod
@@ -260,7 +294,7 @@ python -m agent.orchestrator --target ../some-project --artifacts artifacts
 | `NIM_API_KEY not configured` | Secret missing → deterministic-only audit still completes |
 | Approval always expires | `gateway-url` unset or Slack Request URL wrong; check gateway logs |
 | `401 bad slack signature` | `SLACK_SIGNING_SECRET` mismatch or clock skew > 5 min |
-| `403 unauthorized approver` | Clicker isn't the mapped dev or admin; extend `GITHUB_SLACK_USER_MAP` |
+| `403 unauthorized approver` | Clicker isn't the mapped dev or admin; extend `SLACK_USER_MAP` |
 | Frontend `unavailable` | No start script or port timeout; check `start_app` logs in artifacts |
 | Fork PR does nothing but audit | Intended: read-only on untrusted code |
 | Duplicate Slack messages | Same commit re-audited → idempotency key skips; check `_state/` |
