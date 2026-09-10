@@ -1,0 +1,74 @@
+name: Verify audit image (smoke)
+
+# Manual only. Pulls the private image with the job token (exact caller auth path),
+# runs the audit container on a fixture, then asserts artifacts on the host.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+
+      - name: Pull image with job token (same auth path as every caller)
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          docker pull --quiet ghcr.io/eiden-group/veriq:latest
+        env:
+          GITHUB_TOKEN: *** secrets.GITHUB_TOKEN }}
+
+      - name: In-image tool sanity (binaries + imports)
+        run: |
+          docker run --rm --entrypoint bash ghcr.io/eiden-group/veriq:latest -lc '
+            set -e
+            gitleaks version
+            python -m bandit --version | head -1
+            python -c "import playwright, yaml, jsonschema, tenacity, structlog; print(\"imports OK\")"
+            python -c "from agent import orchestrator; print(\"agent import OK\")"
+          '
+
+      - name: Run audit container on the Python security fixture
+        run: |
+          docker run --rm \
+            -v "$PWD/tests/fixtures/py-sec-issue:/workspace" -w /workspace \
+            -e PYTHONPATH=/veriq \
+            -e GITHUB_REPOSITORY=EIDEN-GROUP/smoketest -e GITHUB_REF_NAME=main \
+            -e GITHUB_SHA=smoke001 -e GITHUB_ACTOR=anynonenom \
+            -e SLACK_USER_MAP='{"anynonenom":"U09D383NDSM"}' \
+            -e AI_AGENT_ENABLE_REPAIR=false \
+            --entrypoint bash ghcr.io/eiden-group/veriq:latest -lc \
+            'python -m agent.orchestrator --target . --artifacts artifacts'
+
+      - name: Assert audit artifacts (host-side)
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          p = pathlib.Path("tests/fixtures/py-sec-issue/artifacts/audit.json")
+          assert p.exists() and p.stat().st_size > 100, "audit.json missing/empty"
+          a = json.loads(p.read_text())
+          blob = json.dumps(a["findings"])
+          assert any(k in blob for k in ("hardcoded-secret", "command-injection", "SEC-")), a["findings"]
+          assert "overall_score" in a and a["severity_counts"] is not None
+          md = pathlib.Path("tests/fixtures/py-sec-issue/artifacts/audit.md")
+          assert md.exists() and md.stat().st_size > 50, "audit.md missing"
+          print(f"SMOKE OK  score={a['overall_score']}  findings={len(a['findings'])}  "
+                f"severities={a['severity_counts']}")
+          PY
+
+      - name: Surface audit.md
+        if: always()
+        run: head -40 tests/fixtures/py-sec-issue/artifacts/audit.md 2>/dev/null || echo "no audit.md"
+
+      - name: Clean fixture artifacts
+        if: always()
+        run: sudo rm -rf tests/fixtures/py-sec-issue/artifacts 2>/dev/null || true
