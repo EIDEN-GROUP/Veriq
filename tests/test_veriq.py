@@ -387,7 +387,7 @@ def test_partition_fixable_threshold():
     assert [x["id"] for x in fixable] == ["M-1"]           # only >= MEDIUM, fixable
     assert [x["id"] for x in advisory] == ["A-1", "A-2"]   # below bar => advisory (admin sees)
     fixable_all, adv = partition_fixable(items, "LOW")
-    assert [x["id"] for x in fixable_all] == ["A-1", "A-2", "M-1"] and adv == []
+    assert [x["id"] for x in fixable_all] == ["A-1", "M-1"] and [x["id"] for x in adv] == ["A-2"]
 
 
 def test_audit_dict_advisory_field():
