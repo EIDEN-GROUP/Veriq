@@ -75,7 +75,7 @@ jobs:
           docker pull ghcr.io/eiden-group/veriq:latest
           docker run --rm \
             -v "$PWD:/workspace" -w /workspace \
-            -e NIM_API_KEY -e NIM_BASE_URL -e NIM_MODEL \
+            -e PYTHONPATH=/veriq -e NIM_API_KEY -e NIM_BASE_URL -e NIM_MODEL \
             -e SLACK_BOT_TOKEN -e SLACK_SIGNING_SECRET -e SLACK_ADMIN_USER_ID -e SLACK_USER_MAP \
             -e APPROVAL_GATEWAY_URL -e AI_AGENT_MAX_REPAIR_ATTEMPTS -e AI_AGENT_APPROVAL_TIMEOUT \
             -e AI_AGENT_ENABLE_REPAIR -e GITHUB_TOKEN -e GITHUB_REPOSITORY -e GITHUB_SHA \
@@ -110,4 +110,5 @@ jobs:
             artifacts/audit.md
             artifacts/screenshots/
             artifacts/slack-delivery-failed.json
+            artifacts/slack-payload-failed.json
           if-no-files-found: warn

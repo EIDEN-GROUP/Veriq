@@ -37,6 +37,8 @@ class NimClient:
 
     def complete_json(self, task_prompt: str, evidence: dict, reasoning: bool = True) -> dict:
         """Call NIM requesting a JSON object; retry malformed responses, then try fallback models."""
+        if not self.api_key:
+            raise RuntimeError("NIM_API_KEY not configured")
         from agent.redact import redact_evidence_blob
         if not self.api_key:
             raise RuntimeError("NIM unavailable on all models: NIM_API_KEY not configured")
