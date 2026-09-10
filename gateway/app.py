@@ -96,8 +96,13 @@ def _state_blocks(audit_id: str, emoji: str, title: str, detail: str, footer: st
 
 
 @app.post("/audits")
-def register_audit(payload: dict) -> dict:
-    """Called by the Action when it posts the approval request (or pre-created)."""
+def register_audit(payload: dict, x_veriq_token: str = Header(default="")) -> dict:
+    """Called by the Action when it posts the approval request.
+    If GATEWAY_REGISTRATION_TOKEN is set, callers must present it (X-Veriq-Token):
+    stops URL-leak spam of fake pending audits. Reads/decisions always verified via HMAC."""
+    reg_token = os.environ.get("GATEWAY_REGISTRATION_TOKEN", "")
+    if reg_token and not hmac.compare_digest(x_veriq_token, reg_token):
+        raise HTTPException(401, "bad registration token")
     aid = str(payload["audit_id"])
     store.set_pending(aid, {**payload, "created": time.time(),
                             "expires": time.time() + int(payload.get("timeout_minutes", 30)) * 60})

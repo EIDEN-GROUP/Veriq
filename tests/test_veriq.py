@@ -283,6 +283,19 @@ def test_approval_timeout_without_gateway():
     assert d["decision"] == "expired"
 
 
+# ---------- gateway registration auth (optional shared secret) ----------
+def test_gateway_registration_token_gate():
+    import os
+    client, g = _gw_client()
+    body = {"audit_id": "RT-1", "repository": "o/r", "commit": "c", "timeout_minutes": 1}
+    assert client.post("/audits", json=body).status_code == 200          # unset -> open (compat)
+    os.environ["GATEWAY_REGISTRATION_TOKEN"] = "sekret"
+    assert client.post("/audits", json=body).status_code == 401          # missing header
+    r = client.post("/audits", json=body, headers={"X-Veriq-Token": "sekret"})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    os.environ.pop("GATEWAY_REGISTRATION_TOKEN", None)
+
+
 # ---------- gateway registration (buttons dead-end without it) ----------
 def test_register_with_gateway_posts_binding(monkeypatch):
     import os

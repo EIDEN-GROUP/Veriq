@@ -53,7 +53,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
-          envs: VPS_DOMAIN,SLACK_SIGNING_SECRET,SLACK_ADMIN_USER_ID,SLACK_USER_MAP
+          envs: VPS_DOMAIN,SLACK_SIGNING_SECRET,SLACK_ADMIN_USER_ID,SLACK_USER_MAP,GATEWAY_REGISTRATION_TOKEN
           script: |
             set -e
             cd ~/veriq-gateway
@@ -82,6 +82,9 @@ jobs:
             printf 'SLACK_SIGNING_SECRET=%s\n' "$SLACK_SIGNING_SECRET" > .gateway.env
             printf 'SLACK_ADMIN_USER_ID=%s\n' "$SLACK_ADMIN_USER_ID" >> .gateway.env
             printf 'SLACK_USER_MAP=%s\n' "$SLACK_USER_MAP" >> .gateway.env
+            if [ -n "$GATEWAY_REGISTRATION_TOKEN" ]; then
+              printf 'GATEWAY_REGISTRATION_TOKEN=%s\n' "$GATEWAY_REGISTRATION_TOKEN" >> .gateway.env
+            fi
             chmod 600 .gateway.env
             # Fresh Caddyfile is re-copied every deploy, so this substitution always matches.
             sed -i "s|veriq-gateway\.example\.com|$VPS_DOMAIN|" Caddyfile
@@ -103,3 +106,4 @@ jobs:
           SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
           SLACK_ADMIN_USER_ID: ${{ secrets.SLACK_ADMIN_USER_ID }}
           SLACK_USER_MAP: ${{ secrets.SLACK_USER_MAP }}
+          GATEWAY_REGISTRATION_TOKEN: ${{ secrets.GATEWAY_REGISTRATION_TOKEN }}

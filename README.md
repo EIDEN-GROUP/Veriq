@@ -102,6 +102,7 @@ enable/disable audit areas, repair policy, `deny_paths`, viewport sizes,
 | `SLACK_SIGNING_SECRET` | Slack app signing secret (gateway verifies every callback) |
 | `SLACK_ADMIN_USER_ID` | `U0AQWT35TP0` |
 | `SLACK_USER_MAP` | `{"anynonenom":"U09D383NDSM","essafar-basma":"U0ASH084QKE","marouaneakrich":"U0AQWT35TP0"}` |
+| `GATEWAY_REGISTRATION_TOKEN` | optional — any random string (e.g. `openssl rand -hex 16`). When set, it's deployed to the gateway AND passed to audits; every `POST /audits` must present it as `X-Veriq-Token`. |
 
 Approval nag bar: only findings at/above `repair.approval_min_severity` (default
 `MEDIUM`) with `auto_fixable=true` trigger the developer 🟢/🔴 request. LOW/INFO

@@ -24,9 +24,13 @@ def register_with_gateway(audit: dict, timeout_minutes: int = 30) -> bool:
                "timeout_minutes": timeout_minutes,
                "fixable": [f["id"] for f in audit.get("findings", [])
                            if f.get("auto_fixable") and not f.get("needs_human_review")][:10]}
+    headers = {"Content-Type": "application/json"}
+    reg = os.environ.get("GATEWAY_REGISTRATION_TOKEN", "")
+    if reg:
+        headers["X-Veriq-Token"] = reg
     try:
         req = urllib.request.Request(f"{gateway}/audits", data=json.dumps(payload).encode(),
-                                     headers={"Content-Type": "application/json"}, method="POST")
+                                     headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=15) as r:
             return bool(json.loads(r.read().decode()).get("ok", False))
     except Exception as e:

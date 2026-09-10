@@ -27,6 +27,7 @@ on:
       SLACK_SIGNING_SECRET: { required: true }
       SLACK_ADMIN_USER_ID: { required: true }
       SLACK_USER_MAP: { required: true }
+      GATEWAY_REGISTRATION_TOKEN: { required: false }
 
 permissions:
   contents: write      # push ai-agent/fix-* branch (GitHub downgrades to read-only for fork PRs)
@@ -60,6 +61,7 @@ jobs:
           SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
           SLACK_ADMIN_USER_ID: ${{ secrets.SLACK_ADMIN_USER_ID }}
           SLACK_USER_MAP: ${{ secrets.SLACK_USER_MAP }}
+          GATEWAY_REGISTRATION_TOKEN: ${{ secrets.GATEWAY_REGISTRATION_TOKEN }}
           APPROVAL_GATEWAY_URL: ${{ inputs.gateway-url }}
           AI_AGENT_MAX_REPAIR_ATTEMPTS: ${{ inputs.max-repair-attempts }}
           AI_AGENT_APPROVAL_TIMEOUT: ${{ inputs.approval-timeout-minutes }}
@@ -78,6 +80,7 @@ jobs:
             -e APPROVAL_GATEWAY_URL -e AI_AGENT_MAX_REPAIR_ATTEMPTS -e AI_AGENT_APPROVAL_TIMEOUT \
             -e AI_AGENT_ENABLE_REPAIR -e GITHUB_TOKEN -e GITHUB_REPOSITORY -e GITHUB_SHA \
             -e GITHUB_REF_NAME -e GITHUB_ACTOR -e GITHUB_RUN_URL -e PR_NUMBER -e GITHUB_IS_FORK="$IS_FORK" \
+            -e GATEWAY_REGISTRATION_TOKEN \
             --entrypoint bash ghcr.io/eiden-group/veriq:latest -lc \
             "git config --global --add safe.directory /workspace && python -m agent.orchestrator --target . --artifacts artifacts"
 
