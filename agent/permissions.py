@@ -15,8 +15,11 @@ ALLOWLISTED_TOOLS = frozenset({
 
 DENIED_COMMAND_SUBSTRINGS = (
     "terraform apply", "kubectl ", "helm upgrade", "aws ", "az ",
-    "gcloud ", "git reset --hard", "git push --force", "rm -rf /",
-    "shutdown", "reboot", "docker push",
+    "gcloud ", "git reset --hard", "git push --force", "git push -f", "rm -rf /",
+    "shutdown", "reboot", "docker push", "docker run --privileged",
+    "curl -d", "curl --data", "curl -t ", " -d@", " -d @", "--data ", "--data-binary",
+    "wget --post", "--post-data", "nc ", "ncat ",
+    "printenv", "env |", "set |", "base64 -d |", "| bash", "| sh ", "sh -c",
 )
 
 DENIED_CATEGORIES = frozenset({"auth", "payments", "iam", "infrastructure"})
@@ -37,7 +40,7 @@ class Policy:
                        for pat in self.deny_paths)
 
     def is_command_allowed(self, cmd: str) -> bool:
-        c = cmd.lower()
+        c = " " + cmd.lower()
         return not any(d in c for d in DENIED_COMMAND_SUBSTRINGS)
 
     def needs_admin(self, category: str) -> bool:

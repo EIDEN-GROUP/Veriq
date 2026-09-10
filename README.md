@@ -195,14 +195,22 @@ clears a deterministic failure.
 Least-privilege workflow permissions (no `write-all`); fork PRs get read-only audits with
 repair force-disabled. `agent/permissions.py` allowlists 17 tools and blocks privileged/
 destructive commands (`terraform apply`, `kubectl`, `git reset --hard`, `push --force`,
-cloud CLIs…). `deny_paths` (migrations, IaC, keys, `.env*`) can never be patched even
+cloud CLIs…) plus exfil shapes (`curl --data`, ` -d @`, `printenv`, `| bash`, `nc`…).
+Tool subprocesses run with a **scrubbed environment** (`ToolRegistry._child_env`) — any
+var matching `*KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*` plus `GITHUB_TOKEN`/`AWS_*`/
+`SLACK_*`/`NIM_*`/`UPSTASH_*` is stripped, so even a policy-escaped command sees no
+credentials; output is additionally redacted. The fix loop refuses to run if the
+checkout is dirty (§22), and every audit publishes a commit status check.
+`deny_paths` (migrations, IaC, keys, `.env*`) can never be patched even
 with approval; `auth/payments/iam/infrastructure` findings require admin approval.
+Optional `GATEWAY_REGISTRATION_TOKEN` secret gates gateway `/audits` registration.
 `agent/redact.py` strips credentials (API keys, Slack/GitHub tokens, bearer headers,
 private keys, secret env values) before NIM/Slack/logs/artifacts; `.env*`/key files are
 never read. Findings carry `confidence`; weak-evidence items become `needs_human_review`
-instead of auto-fixes. Auto-fix allowlist: high-confidence, localized, verifiable,
-non-security-architecture changes (lint, types, null checks, imports, a11y labels,
-CSS overflow, safe dep updates).
+instead of auto-fixes. Below the `approval_min_severity` bar (default MEDIUM) findings
+are advisory-only for the admin — the developer is never pinged. Auto-fix allowlist:
+high-confidence, localized, verifiable, non-security-architecture changes (lint, types,
+null checks, imports, a11y labels, CSS overflow, safe dep updates).
 
 ## 9. Frontend / UI / a11y pipeline
 

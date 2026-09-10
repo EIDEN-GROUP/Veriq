@@ -5,6 +5,13 @@ import subprocess
 from pathlib import Path
 
 
+def workspace_dirty(root: Path) -> str:
+    """Any uncommitted user work? (must be empty before we touch the checkout)"""
+    proc = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True,
+                          text=True, timeout=30)
+    return (proc.stdout or "").strip()
+
+
 def read_file_map(root: Path, findings: list[dict]) -> dict[str, str]:
     files: dict[str, str] = {}
     for f in findings:

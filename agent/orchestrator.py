@@ -251,6 +251,16 @@ def main() -> int:
     write_audit_artifacts(audit, artifacts)
     mark_audited(state_dir, key, audit_id)
     notify_audit(audit, admin_id=admin_id, artifacts_dir=artifacts)  # dev + admin fan-out inside; failures saved, never fatal
+    try:
+        from github.checks import set_check
+        statuses = [str(x.get("status")) for x in (tests, build, security)]
+        crit = sev_counts.get("CRITICAL", 0)
+        state = ("failure" if ("fail" in statuses or (crit and cfg["security"]["block_on_critical"]))
+                 else "success" if not crit else "neutral")
+        set_check(audit["repository"], audit["commit"], state,
+                  f"Veriq {audit['overall_score']}/100 · {audit['approval'].get('decision')} · {audit_id}")
+    except Exception:
+        pass
     log_event("AUDIT_COMPLETED", audit_id=audit_id, score=score,
               fixes=audit["fixes"], approval=audit["approval"].get("decision"))
     if security.get("status") == "fail" and cfg["security"]["block_on_critical"]:
@@ -281,10 +291,16 @@ def _deterministic_fallback_findings(evidence: dict) -> list[dict]:
 
 
 def _run_fix_flow(audit: dict, loop: AgentLoop, policy: Policy, target: Path, cfg: dict, artifacts: Path) -> None:
-    from github.patches import apply_patches_on_bot_branch, read_file_map
+    from github.patches import apply_patches_on_bot_branch, read_file_map, workspace_dirty
     from agent.permissions import check_patch_allowed
     approved = audit["approval"].get("decision") == "approved"
     if not approved:
+        return
+    dirty = workspace_dirty(target)
+    if dirty:
+        # Git safety: never build on top of someone's uncommitted work.
+        audit["fixes"]["failed"].append("workspace not clean — refusing to auto-fix")
+        log_event("FIX_REFUSED_DIRTY_WORKSPACE", files=len(dirty.splitlines()))
         return
     fixable = [f for f in audit["findings"] if f.get("auto_fixable") and not f.get("needs_human_review")]
     max_attempts: int = cfg["agent"]["max_repair_attempts"]

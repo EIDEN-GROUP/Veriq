@@ -9,6 +9,10 @@ from pathlib import Path
 from agent.permissions import Policy
 from agent.redact import redact_text, should_exclude_path
 
+_EXTRA_DROP = ("GITHUB_TOKEN", "GH_TOKEN", "NPM_TOKEN", "AWS_", "AZURE_",
+               "GOOGLE_APPLICATION", "DATABASE_URL", "REDIS_URL", "UPSTASH_",
+               "SLACK_", "NIM_", "AI_AGENT_API", "VERIQ_TOKEN")
+
 
 @dataclass
 class ToolResult:
@@ -22,6 +26,23 @@ class ToolRegistry:
     root: Path
     policy: Policy
     log: list[dict] = field(default_factory=list)
+
+    @staticmethod
+    def _child_env() -> dict:
+        """Scrubbed environment for LLM-runnable commands: tools work, secrets do not leak.
+
+        Keeps PATH/HOME/etc; drops anything credential-like plus explicit denylist.
+        """
+        import os
+        drop = ("KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH",
+                "PRIVATE", "SESSION", "ACCESS")
+        out = {}
+        for k, v in os.environ.items():
+            ku = k.upper()
+            if any(d in ku for d in drop) or ku.startswith(_EXTRA_DROP):
+                continue
+            out[k] = v
+        return out
 
     def _record(self, tool: str, args: dict, result: ToolResult) -> ToolResult:
         self.log.append({"tool": tool, "args": args, "ok": result.ok})
@@ -95,7 +116,7 @@ class ToolRegistry:
         timeout = int(a.get("timeout_s", 120))
         try:
             proc = subprocess.run(cmd, shell=True, cwd=self.root, capture_output=True,
-                                  text=True, timeout=timeout)
+                                  text=True, timeout=timeout, env=self._child_env())
             out = redact_text((proc.stdout + "\n" + proc.stderr)[-8000:])
             return ToolResult(proc.returncode == 0, f"exit={proc.returncode}\n{out}")
         except subprocess.TimeoutExpired:
