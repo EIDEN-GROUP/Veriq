@@ -31,6 +31,22 @@ def log_event(event: str, **fields: object) -> None:
     print(json.dumps(rec), flush=True)
 
 
+SEV_RANK = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+
+
+def partition_fixable(findings: list[dict], min_severity: str,
+                      ) -> tuple[list[dict], list[dict]]:
+    """(fixable, advisory): auto-fixable & not human-review-only items at/above
+    min_severity become approval candidates; everything lower is advisory-only and
+    reaches the admin audit without nagging the developer."""
+    rank = SEV_RANK.get(min_severity.upper(), 2)
+    fixable = [f for f in findings
+               if f.get("auto_fixable") and not f.get("needs_human_review")]
+    above = [f for f in fixable if SEV_RANK.get(str(f.get("severity", "INFO")).upper(), 0) >= rank]
+    below = [f for f in fixable if f not in above]
+    return above, below
+
+
 def load_config(repo_cfg: Path) -> dict:
     defaults = yaml.safe_load((ROOT / "config" / "defaults.yml").read_text())
     if repo_cfg.exists():
@@ -188,7 +204,8 @@ def main() -> int:
         "commit": ctx["commit"], "pr_number": ctx["pr_number"], "triggered_by": ctx["actor"],
         "slack_user": slack_user, "overall_score": score, "findings": findings,
         "severity_counts": sev_counts, "tests": tests, "build": build, "security": security,
-        "frontend": frontend_evidence, "fixes": {"identified": 0, "approved": 0, "fixed": 0, "failed": []},
+        "frontend":         frontend_evidence, "fixes": {"identified": 0, "approved": 0, "fixed": 0, "failed": [],
+                                    "advisory": []},
         "verification": {}, "approval": {"requested": False, "decision": "none"},
         "timestamps": {"started": datetime.datetime.now(datetime.timezone.utc).isoformat()},
         "artifacts": [],
@@ -196,8 +213,10 @@ def main() -> int:
 
     # ---- ASK / APPROVE (Slack-gated; forks + unmapped devs handled safely) ----
     from slack.notifications import notify_audit
-    fixable = [f for f in findings if f.get("auto_fixable") and not f.get("needs_human_review")]
+    min_sev = str(cfg["repair"].get("approval_min_severity", "MEDIUM")).upper()
+    fixable, advisory = partition_fixable(findings, min_sev)
     audit["fixes"]["identified"] = len(fixable)
+    audit["fixes"]["advisory"] = [f["id"] for f in advisory]
     can_repair = (cfg["repair"]["enabled"] and cfg["repair"]["require_slack_approval"]
                   and os.environ.get("AI_AGENT_ENABLE_REPAIR", "true").lower() != "false"
                   and not ctx["is_fork"] and bool(fixable))
@@ -218,6 +237,12 @@ def main() -> int:
         audit["approval"]["decision"] = "skipped-fork-readonly"
     elif fixable and not cfg["repair"]["enabled"]:
         audit["approval"]["decision"] = "repair-disabled"
+    elif advisory and not fixable:
+        # Below-threshold suggestions (LOW/INFO): never bother the developer for
+        # approval; report them to the admin in the audit instead.
+        audit["approval"]["decision"] = "advisory-only"
+        log_event("APPROVAL_SKIPPED_BELOW_THRESHOLD", audit_id=audit_id,
+                  advisory=len(advisory), min_severity=min_sev)
 
     # ---- AUDIT artifacts + NOTIFY (admin ALWAYS, dev when mapped) ----
     from reports.generator import write_audit_artifacts

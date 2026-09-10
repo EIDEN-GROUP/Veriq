@@ -18,6 +18,9 @@ repair:
   enabled: true
   require_slack_approval: true
   approval_timeout_minutes: 30
+  # Findings below this severity are advisory-only (shown to admin; no developer
+  # approval nag): CRITICAL > HIGH > MEDIUM > LOW > INFO
+  approval_min_severity: MEDIUM
   deny_paths:
     - "**/migrations/**"
     - "**/terraform/**"

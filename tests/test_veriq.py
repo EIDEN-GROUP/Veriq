@@ -376,7 +376,27 @@ def test_upstash_store_rest_shape(monkeypatch):
     assert calls[-1] == ["GET", "veriq:decision:A1"]
 
 
-# ---------- idempotency ----------
+# ---------- severity threshold policy: LOW-only findings never nag the developer ----------
+def test_partition_fixable_threshold():
+    from agent.orchestrator import partition_fixable
+    f = lambda sev, fix=True, hr=False, i="X": {"id": i, "severity": sev,
+                                                "auto_fixable": fix, "needs_human_review": hr}
+    items = [f("LOW", i="A-1"), f("INFO", i="A-2"), f("MEDIUM", i="M-1"),
+             f("HIGH", fix=False, i="H-1"), f("CRITICAL", hr=True, i="C-1")]
+    fixable, advisory = partition_fixable(items, "MEDIUM")
+    assert [x["id"] for x in fixable] == ["M-1"]           # only >= MEDIUM, fixable
+    assert [x["id"] for x in advisory] == ["A-1", "A-2"]   # below bar => advisory (admin sees)
+    fixable_all, adv = partition_fixable(items, "LOW")
+    assert [x["id"] for x in fixable_all] == ["A-1", "A-2", "M-1"] and adv == []
+
+
+def test_audit_dict_advisory_field():
+    import subprocess as sp, os
+    # structural check: orchestrator initializes fixes.advisory (grep-level via import source)
+    src = Path("agent/orchestrator.py").read_text(encoding="utf-8")
+    assert '"advisory": []' in src and '"advisory-only"' in src
+
+
 def test_idempotency_key_stable():
     from agent.idempotency import audit_key
     import tempfile

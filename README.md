@@ -103,6 +103,11 @@ enable/disable audit areas, repair policy, `deny_paths`, viewport sizes,
 | `SLACK_ADMIN_USER_ID` | `U0AQWT35TP0` |
 | `SLACK_USER_MAP` | `{"anynonenom":"U09D383NDSM","essafar-basma":"U0ASH084QKE","marouaneakrich":"U0AQWT35TP0"}` |
 
+Approval nag bar: only findings at/above `repair.approval_min_severity` (default
+`MEDIUM`) with `auto_fixable=true` trigger the developer 🟢/🔴 request. LOW/INFO
+suggestions are listed in the **admin** audit (`decision: advisory-only`) and the
+developer is not pinged. Admin receives every audit regardless.
+
 For local dev copy `.env.example` → `.env` (gitignored). The user map is never logged.
 
 ## 5. NVIDIA NIM setup

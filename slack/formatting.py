@@ -56,5 +56,7 @@ def admin_text(audit: dict, run_url: str = "") -> str:
         f"Fix requested: {'YES' if audit['approval'].get('requested') else 'NO'}  "
         f"Decision: {audit['approval'].get('decision')}",
         f"Changes: {audit['fixes']['fixed']} verified fix(es)",
+        f"Advisory suggestions (not fixed, below approval bar): "
+        f"{len(audit['fixes'].get('advisory', []))}",
         f"Full audit: {run_url or 'GitHub Actions artifacts'}",
     ]))

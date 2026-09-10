@@ -17,8 +17,9 @@ audit:
 
 repair:
   enabled: true
-  require_slack_approval: true   # MUST stay true in production
+  require_slack_approval: true
   approval_timeout_minutes: 30
+  approval_min_severity: MEDIUM   # LOW/INFO fixes never DM the developer; admin-only advisory
   # Paths the agent may never patch even with approval:
   deny_paths:
     - "**/migrations/**"
