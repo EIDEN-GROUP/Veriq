@@ -85,6 +85,16 @@ def health() -> dict[str, Any]:
     return {"ok": True, "backend": type(store).__name__}
 
 
+def _state_blocks(audit_id: str, emoji: str, title: str, detail: str, footer: str) -> list[dict]:
+    """Self-contained mirrors of slack.formatting state blocks (gateway image has no slack pkg)."""
+    return [
+        {"type": "header", "text": {"type": "plain_text", "text": f"{emoji}  {title}", "emoji": True}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": detail}},
+        {"type": "divider"},
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": f"`{audit_id}`  ·  {footer}"}]},
+    ]
+
+
 @app.post("/audits")
 def register_audit(payload: dict) -> dict:
     """Called by the Action when it posts the approval request (or pre-created)."""
@@ -163,11 +173,20 @@ async def slack_actions(request: Request,
     pend = store.get_pending(audit_id)
     if not pend:
         raise HTTPException(404, "unknown audit")
-    if store.get_decision(audit_id):
-        return JSONResponse({"text": "Already recorded — duplicate ignored."})
+    already = store.get_decision(audit_id)
+    clicker = str(payload.get("user", {}).get("name") or payload.get("user", {}).get("id", ""))
+    if already:
+        done = "approved @{}".format(already.get("approver_slack_id", "?")) \
+            if already.get("decision") == "approved" else f"{already.get('decision')}"
+        return JSONResponse({"response_type": "ephemeral",
+                             "text": f"🔁 Already recorded: `{audit_id}` → {done}. Your second click "
+                                     f"changed nothing (anti-duplicate)."})
     if time.time() > pend["expires"]:
         store.set_decision(audit_id, {"decision": "expired", "audit_id": audit_id})
-        return JSONResponse({"text": "⏱️ Approval expired. No changes made."})
+        return JSONResponse({"replace_original": True, "blocks": _state_blocks(
+            audit_id, "⏱️", "Approval window closed",
+            ":hourglass_flowing_sand:  This audit expired before the decision was recorded — "
+            "*no code was modified.*", "re-run the audit to ask again")})
     # value binds repo|commit|pr — reject mismatches (prevents old approval reuse)
     value = str(actions[0].get("value", ""))
     repo, _, rest = value.partition("|")
@@ -187,9 +206,22 @@ async def slack_actions(request: Request,
         "decision": "approved" if verb == "approve" else "rejected",
         "audit_id": audit_id, "repository": pend.get("repository"),
         "commit": pend.get("commit"), "pr_number": pend.get("pr_number"),
-        "approver_slack_id": slack_user,
+        "approver_slack_id": slack_user, "approver_name": clicker,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "nonce": nonce,
     })
-    emoji = "🟢" if verb == "approve" else "🔴"
-    return JSONResponse({"text": f"{emoji} Recorded {verb} for {audit_id}."})
+    repo = str(pend.get("repository") or "")
+    if verb == "approve":
+        detail = f":white_check_mark:  *@{clicker or slack_user}* approved the AI fixes"
+        if repo:
+            detail += f"  ·  <https://github.com/{repo}|`{repo}`>"
+        blocks = _state_blocks(audit_id, "🟢", "Approved — AI is on it", detail,
+                               "verification (tests · build · security · browser) runs now — "
+                               "the 👾 agent posts the outcome into this message")
+    else:
+        blocks = _state_blocks(audit_id, "🔴", "Fix declined",
+                               f":no_entry:  *@{clicker or slack_user}* declined automatic fixes. "
+                               f"*No code was modified.* The audit report stands on its own.",
+                               "human review of the findings is recommended")
+    return JSONResponse({"replace_original": True, "blocks": blocks,
+                         "text": ("🟢 approved" if verb == "approve" else "🔴 declined")})

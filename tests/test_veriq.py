@@ -225,14 +225,20 @@ def test_gateway_approve_and_duplicate():
     client, g = _gw_client()
     r = _slack_post(client, g, "A1", "UDEV1", "approve")
     assert r.status_code == 200
+    body = r.json()
+    assert body["replace_original"] is True  # mutates the approval message in place...
+    assert "Approved" in json.dumps(body["blocks"])
     assert client.get("/approvals/A1").json()["decision"] == "approved"
+    assert client.get("/approvals/A1").json()["approver_slack_id"] == "UDEV1"
     r2 = _slack_post(client, g, "A1", "UDEV1", "approve")  # duplicate
-    assert r2.status_code == 200 and "duplicate" in r2.text.lower()
+    assert r2.status_code == 200
+    assert r2.json()["response_type"] == "ephemeral" and "Already recorded" in r2.json()["text"]
 
 
 def test_gateway_reject_and_unauthorized():
     client, g = _gw_client()
     r = _slack_post(client, g, "A2", "UDEV1", "reject")
+    assert r.json()["replace_original"] is True and "declined" in json.dumps(r.json()["blocks"]).lower()
     assert client.get("/approvals/A2").json()["decision"] == "rejected"
     r = _slack_post(client, g, "A3", "UEVIL", "approve")
     assert r.status_code == 403  # unauthorized slack user cannot approve
@@ -374,6 +380,78 @@ def test_upstash_store_rest_shape(monkeypatch):
     assert "EX" in calls[0]  # decisions always carry TTL
     assert s.get_decision("A1")["decision"] == "approved"
     assert calls[-1] == ["GET", "veriq:decision:A1"]
+
+
+# ---------- messaging design: blocks, in-place states, no duplicate DMs ----------
+def _minimal_audit():
+    return {"audit_id": "AUDIT-M-1", "repository": "o/r", "branch": "main", "commit": "abc12345",
+            "pr_number": 3, "triggered_by": "dev", "slack_user": "UDEV1", "overall_score": 78,
+            "findings": [{"id": "CODE-001", "severity": "MEDIUM", "category": "code",
+                          "title": "Fix lint in a.ts", "description": "d", "file": "a.ts",
+                          "line": 1, "evidence": "eslint error", "recommendation": "r",
+                          "auto_fixable": True, "confidence": 0.9}],
+            "severity_counts": {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 1, "LOW": 2, "INFO": 0},
+            "tests": {"status": "pass"}, "build": {"status": "fail"},
+            "security": {"status": "pass"}, "frontend": {"status": "skipped"},
+            "fixes": {"identified": 1, "approved": 1, "fixed": 1, "failed": [],
+                      "done": ["CODE-001"], "advisory": []},
+            "verification": {}, "approval": {"requested": True, "decision": "approved"},
+            "timestamps": {}, "artifacts": []}
+
+
+def test_approval_blocks_shape():
+    from slack.formatting import approval_blocks
+    b = approval_blocks(_minimal_audit(), 30)
+    assert b[0]["type"] == "header" and "👾" in b[0]["text"]["text"]
+    acts = [blk for blk in b if blk["type"] == "actions"][0]["elements"]
+    assert len(acts) == 2 and acts[0]["action_id"] == "approve:AUDIT-M-1"
+    assert acts[1]["style"] == "danger"
+    assert "🟢" in acts[0]["text"]["text"] and "🔴" in acts[1]["text"]["text"]
+
+
+def test_state_and_admin_blocks_render():
+    from slack.formatting import (admin_blocks, approved_state_blocks,
+                                  expired_state_blocks, final_dev_blocks,
+                                  rejected_state_blocks)
+    assert "Approved" in json.dumps(approved_state_blocks("A", "dev", "o/r", 1))
+    assert "declined" in json.dumps(rejected_state_blocks("A", "dev")).lower()
+    assert "expired" in json.dumps(expired_state_blocks("A")).lower() or "closed" in json.dumps(expired_state_blocks("A"))
+    fin = final_dev_blocks(_minimal_audit(), "http://run")
+    assert "CODE-001" in json.dumps(fin) and "verified" in json.dumps(fin)
+    adm = admin_blocks(_minimal_audit(), "http://run")
+    assert adm[0]["type"] == "header" and "ADMIN" in adm[0]["text"]["text"]
+
+
+def test_client_update_and_post_refs(monkeypatch):
+    import slack.client as c
+    calls = []
+
+    def fake_api(method, payload):
+        calls.append((method, payload.get("channel"), payload.get("ts")))
+        return {"ok": True, "channel": "D1", "ts": "111.222"}
+
+    monkeypatch.setattr(c, "_api", fake_api)
+    ref = c.post_message("U123", "hi", [{"type": "divider"}])
+    assert ref == {"channel": "D1", "ts": "111.222"}
+    assert c.update_message(ref, "new", None) is True
+    assert calls[-1][0] == "chat.update" and calls[-1][2] == "111.222"
+    assert c.update_message(None, "x") is False  # missing ref -> silently skip
+
+
+def test_notify_updates_approval_message_not_duplicate_dm(monkeypatch):
+    import slack.notifications as n
+    updates, posts = [], []
+    monkeypatch.setattr(n, "update_message",
+                        lambda ref, text, blocks=None: updates.append((ref, text)) or True)
+    monkeypatch.setattr(n, "post_message",
+                        lambda ch, text, blocks=None: posts.append((ch, text)) or {"channel": ch, "ts": "t"})
+    a = _minimal_audit()
+    a["approval"]["message_ref"] = {"channel": "D9", "ts": "1.1"}
+    rec = n.notify_audit(a, admin_id="UADMIN", artifacts_dir=__file__)
+    assert rec["dev"] and rec["admin"]
+    assert updates and updates[0][0]["ts"] == "1.1"          # dev message edited in place...
+    assert all(ch != "UDEV1" for ch, _ in posts)             # ...and never re-DM'd
+    assert posts and posts[0][0] == "UADMIN"                  # admin got their own audit
 
 
 # ---------- severity threshold policy: LOW-only findings never nag the developer ----------

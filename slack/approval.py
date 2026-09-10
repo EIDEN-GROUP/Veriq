@@ -1,7 +1,7 @@
-"""Slack approval: post two-button request, poll gateway for the verified decision.
+"""Slack approval: register at gateway -> post two-button request -> poll decision.
 
-The gateway (gateway/app.py) validates signatures + authz; this module only polls.
-Without a gateway URL configured, approval safely resolves to 'expired' (no mutation).
+In-place UX: after a click is recorded, the SAME message is updated
+(pending -> 🔧 working -> ✅ final outcome); developers get zero duplicate DMs.
 """
 from __future__ import annotations
 
@@ -10,24 +10,20 @@ import os
 import time
 import urllib.request
 
-from slack.client import post_message
-from slack.formatting import approval_blocks
+from slack.client import post_message, update_message
+from slack.formatting import approval_blocks, working_blocks
 
 
 def register_with_gateway(audit: dict, timeout_minutes: int = 30) -> bool:
-    """Bind (audit_id, repository, commit, pr, dev) at the gateway BEFORE polling.
-
-    Without this the gateway answers 404 unknown-audit and the buttons dead-end.
-    Failure is fail-safe: the Slack message still goes out, the wait expires,
-    and zero code is modified.
-    """
     gateway = os.environ.get("APPROVAL_GATEWAY_URL", "").rstrip("/")
     if not gateway:
         return False
     payload = {"audit_id": audit["audit_id"], "repository": audit["repository"],
                "commit": audit["commit"], "pr_number": audit.get("pr_number"),
                "triggered_by": audit["triggered_by"], "slack_user": audit.get("slack_user"),
-               "timeout_minutes": timeout_minutes}
+               "timeout_minutes": timeout_minutes,
+               "fixable": [f["id"] for f in audit.get("findings", [])
+                           if f.get("auto_fixable") and not f.get("needs_human_review")][:10]}
     try:
         req = urllib.request.Request(f"{gateway}/audits", data=json.dumps(payload).encode(),
                                      headers={"Content-Type": "application/json"}, method="POST")
@@ -39,25 +35,34 @@ def register_with_gateway(audit: dict, timeout_minutes: int = 30) -> bool:
 
 
 def request_approval(audit: dict, timeout_note: int = 30) -> bool:
+    """Post the approval DM; stores chat ref under audit['approval']['message_ref']."""
     register_with_gateway(audit, timeout_note)
     dev = audit.get("slack_user")
     admin = os.environ.get("SLACK_ADMIN_USER_ID", "")
     target = dev or admin
     if not target:
         return False
-    text = f"Veriq audit {audit['audit_id']}: {audit['fixes']['identified']} fixable issue(s). Approve?"
-    ok = post_message(target, text, approval_blocks(audit))
-    if not ok and dev and admin and dev != admin:
-        ok = post_message(admin, text + f" (developer {audit['triggered_by']} unmapped/unreachable)",
-                          approval_blocks(audit))
-    return ok
+    blocks = approval_blocks(audit, timeout_note)
+    text = (f"Veriq audit {audit['audit_id']}: {audit['fixes']['identified']} "
+            f"fixable issue(s). Approve?")
+    ref = post_message(target, text, blocks)
+    if not ref and dev and admin and dev != admin:
+        ref = post_message(admin, text + f" (developer {audit['triggered_by']} unmapped)", blocks)
+    if ref:
+        audit.setdefault("approval", {})["message_ref"] = ref
+    return bool(ref)
+
+
+def mark_working(audit: dict) -> bool:
+    """Right before the fix loop: rewrite the approval message to an in-progress banner."""
+    return update_message(audit.get("approval", {}).get("message_ref"),
+                          "🔧 Veriq is applying approved fixes…", working_blocks(audit))
 
 
 def wait_for_decision(audit_id: str, timeout_minutes: int = 30, poll_s: int = 10) -> dict:
     gateway = os.environ.get("APPROVAL_GATEWAY_URL", "").rstrip("/")
     if not gateway:
-        # No callback path: Reaction-poll fallback disabled by default -> safe expiry.
-        # (Teams using only Actions without gateway get notify-only behavior.)
+        # No callback path configured: fail safe to expiry (notify-only behaviour).
         time.sleep(2)
         return {"decision": "expired", "reason": "no approval gateway configured; defaulting to no-change"}
     deadline = time.time() + timeout_minutes * 60

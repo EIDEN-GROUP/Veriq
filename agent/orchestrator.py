@@ -232,6 +232,8 @@ def main() -> int:
         audit["approval"].update(decision)
         log_event("APPROVAL_DECIDED", decision=audit["approval"].get("decision"))
         if audit["approval"].get("decision") == "approved":
+            from slack.approval import mark_working
+            mark_working(audit)  # in-banner: buttons -> "🔧 AI applying fixes…"
             _run_fix_flow(audit, loop, policy, target, cfg, artifacts)
     elif ctx["is_fork"]:
         audit["approval"]["decision"] = "skipped-fork-readonly"

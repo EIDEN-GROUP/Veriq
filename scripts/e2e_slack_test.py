@@ -57,8 +57,9 @@ def main() -> int:
     if not register_with_gateway(audit, timeout_min):
         print("::error::gateway registration failed (is APPROVAL_GATEWAY_URL + /audits reachable?)")
         return 2
-    text = final_dev_text({**audit, "approval": {"decision": "pending"}})
-    if not post_message(user, text, blocks):
+    text = final_dev_text(audit)
+    ref = post_message(user, text, approval_blocks(audit, int(os.environ.get("TEST_TIMEOUT_MINUTES", "5"))))
+    if not ref:
         print("::error::Slack post failed (SLACK_BOT_TOKEN missing, or bot can't DM "
               f"{user} — check app scopes/installed members)")
         return 3
@@ -69,12 +70,16 @@ def main() -> int:
     decision = wait_for_decision(audit["audit_id"], timeout_minutes=timeout_min)
     secs = int(time.time() - started)
     print(f"DECISION={decision.get('decision')} after {secs}s -> {json.dumps(decision)}")
-    recap = (f"Veriq E2E `{audit['audit_id']}`: gateway recorded **{decision.get('decision')}**"
-             f" (approver: {decision.get('approver_slack_id', '—')}). "
-             "Production chain verified." if decision.get("decision") in ("approved", "rejected")
-             else f"Veriq E2E `{audit['audit_id']}`: no click within {timeout_min}min -> "
-                  "'expired'. Buttons + polling path work; nobody voted this time.")
-    post_message(user, recap)
+    # In-place UX: rewrite the approval message with the outcome (gateway already
+    # swapped the buttons for the state block on click; this adds timing + verdict).
+    from slack.client import update_message
+    recap = (f":white_check_mark:  *E2E {decision.get('decision').upper()}* — gateway recorded the "
+             f"decision {secs}s after your click (approver `{decision.get('approver_slack_id', '—')}`, "
+             f"nonce `{decision.get('nonce', '—')}`). Production chain verified."
+             if decision.get("decision") in ("approved", "rejected") else
+             f":hourglass_flowing_sand:  no click within {timeout_min}min -> `expired`. Buttons + polling "
+             "path work; nobody voted this time.")
+    update_message(ref, recap, [{"type": "section", "text": {"type": "mrkdwn", "text": recap}}])
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as fh:

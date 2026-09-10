@@ -141,10 +141,31 @@ For local dev copy `.env.example` → `.env` (gitignored). The user map is never
    `GET /approvals/<audit_id>` until approved/rejected/expired.
    No gateway configured → approval resolves to `expired` (notify-only, zero mutations).
 
-Approval message (exact format):
+Approval lifecycle — **one message, edited in place; never a wall of DMs**:
 
 ```
-🤖 AI Engineering Audit
+👾  Veriq — AI Engineering Audit          (pending)
+    o/repo · main · abc1234 · PR #12 · by you · AUDIT-…
+    🧠 score 82/100 · 🔴0 🟠2 🟡3 🔵4 · 🧪✅ 🏗️✅ 🛡️⚠️ 🎨✅
+    🔧 proposed fixes: • CODE-004 … • UI-002 …
+    [🟢 Allow AI to fix] [🔴 Do not allow]        ⏱ window 30 min
+        │ click 🟢  (gateway validates HMAC/authz, records decision,
+        ▼   and Slack's synchronous replace_original rewrites THIS message)
+🟢  Approved — AI is on it
+🔧  AI applying fixes… fmt→lint→typecheck→tests→security→build→Playwright
+        ▼
+✅/❌  Veriq audit complete — 🟩 84/100 · CODE-004 verified · UI-002 failed
+```
+
+Clicking twice or after expiry never acts: second click answers ephemerally
+(“Already recorded”), a late click flips the message to ⏱️ *window closed*.
+Rejected/expired audits likewise rewrite the same message. The **admin** audit
+is always a separate DM/record (independent of the developer's choice).
+
+Legacy example kept for reference:
+
+```
+👾 AI Engineering Audit
 Repository: owner/repository   PR: #123   Triggered by: github-user
 Overall score: 82/100
 Findings: 🔴 Critical: 0  🟠 High: 2  🟡 Medium: 3  🔵 Low: 4
