@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # VPS smoke test: run the exact caller audit command with the ghcr image.
+# NOTE: package is private by default -> log in first with any PAT that has
+# read:packages:  echo "$PAT" | docker login ghcr.io -u NAME --password-stdin
 set -euo pipefail
 FIXTURE="$HOME/veriq-smoke/target"
 IMAGE=ghcr.io/eiden-group/veriq:latest

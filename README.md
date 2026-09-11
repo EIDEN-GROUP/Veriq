@@ -337,6 +337,7 @@ python -m agent.orchestrator --target ../some-project --artifacts artifacts
 | `401 bad slack signature` | `SLACK_SIGNING_SECRET` mismatch or clock skew > 5 min |
 | Slack "didn't respond with the challenge" | gateway too old — redeploy; `/slack/actions` must echo `url_verification` challenges (fixed in `fix(gateway): echo Slack url_verification challenge...`) |
 | `403 unauthorized approver` | Clicker isn't the mapped dev or admin; extend `SLACK_USER_MAP` |
+| `unauthorized` pulling the image manually | It's **private by design** — CI logs in with `GITHUB_TOKEN` (`packages: read`). For a local/VPS pull: `echo <PAT-with-read:packages> \| docker login ghcr.io -u <user> --password-stdin`, or publish the package if you prefer open pulls |
 | Frontend `unavailable` | No start script or port timeout; check `start_app` logs in artifacts |
 | Fork PR does nothing but audit | Intended: read-only on untrusted code |
 | Duplicate Slack messages | Same commit re-audited → idempotency key skips; check `_state/` |
