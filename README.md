@@ -97,7 +97,7 @@ enable/disable audit areas, repair policy, `deny_paths`, viewport sizes,
 |---|---|
 | `NIM_API_KEY` | NVIDIA build API key |
 | `NIM_BASE_URL` | `https://integrate.api.nvidia.com/v1` |
-| `NIM_MODEL` | `nvidia/llama-3.1-nemotron-ultra-253b-v1` (fallback chain in `NIM_FALLBACK_MODELS`) |
+| `NIM_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` (fallback chain in `NIM_FALLBACK_MODELS`) |
 | `SLACK_BOT_TOKEN` | Slack app bot token |
 | `SLACK_SIGNING_SECRET` | Slack app signing secret (gateway verifies every callback) |
 | `SLACK_ADMIN_USER_ID` | `U0AQWT35TP0` |
@@ -114,11 +114,11 @@ For local dev copy `.env.example` → `.env` (gitignored). The user map is never
 ## 5. NVIDIA NIM setup
 
 1. Create a key at build.nvidia.com, store as `NIM_API_KEY`.
-2. Default model `nvidia/llama-3.1-nemotron-ultra-253b-v1` (reasoning ON for audit/fix,
-   OFF for verifier) was chosen because Nemotron pairs DeepSeek-R1-class reasoning with
-   first-class tool-calling/instruction-following and a reasoning on/off switch — the exact
-   mix this agent needs. Fallbacks: `nvidia/llama-3.3-nemotron-super-49b-v1`,
-   `meta/llama-3.3-70b-instruct`. Override with `NIM_MODEL` / `NIM_FALLBACK_MODELS`.
+2. Default model `nvidia/nemotron-3-ultra-550b-a55b` (Nemotron 3 Ultra — NVIDIA's current
+   agentic flagship, **verified callable on your key**; fallbacks `nvidia/nemotron-3-super-120b-a12b`
+   → `mistralai/mistral-nemotron`, both probe-tested). These are catalog serverless endpoints;
+   if a model 404s for an account, pick any working one from `GET /v1/models` and set
+   `NIM_MODEL` — the chain probes every model before declaring AI unavailable.
 3. All calls request `response_format: {type: json_object}`, validate against
    `agent/schemas/`, retry malformed output, then fail over to the next model.
    If every model fails, the audit still completes from deterministic evidence,

@@ -20,14 +20,14 @@ def _load_prompt(name: str) -> str:
 class NimClient:
     base_url: str = field(default_factory=lambda: os.environ.get("NIM_BASE_URL", "https://integrate.api.nvidia.com/v1"))
     api_key: str = field(default_factory=lambda: os.environ.get("NIM_API_KEY", ""))
-    model: str = field(default_factory=lambda: os.environ.get("NIM_MODEL", "nvidia/llama-3.1-nemotron-ultra-253b-v1"))
+    model: str = field(default_factory=lambda: os.environ.get("NIM_MODEL", "nvidia/nemotron-3-ultra-550b-a55b"))
     fallback_models: list[str] = field(default_factory=list)
     timeout_s: int = 120
 
     def __post_init__(self) -> None:
         if not self.fallback_models:
             raw = os.environ.get("NIM_FALLBACK_MODELS",
-                                 "nvidia/llama-3.3-nemotron-super-49b-v1,meta/llama-3.3-70b-instruct")
+                                 "nvidia/nemotron-3-super-120b-a12b,mistralai/mistral-nemotron")
             self.fallback_models = [m.strip() for m in raw.split(",") if m.strip()]
         self._system = _load_prompt("system.md")
 

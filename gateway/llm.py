@@ -23,9 +23,9 @@ PERSONA = (
 
 
 def model_chain() -> list[str]:
-    primary = os.environ.get("NIM_MODEL", "nvidia/llama-3.1-nemotron-ultra-253b-v1")
+    primary = os.environ.get("NIM_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
     fallbacks = os.environ.get("NIM_FALLBACK_MODELS",
-                               "nvidia/llama-3.3-nemotron-super-49b-v1,meta/llama-3.3-70b-instruct")
+                               "nvidia/nemotron-3-super-120b-a12b,mistralai/mistral-nemotron")
     return [m.strip() for m in [primary, *fallbacks.split(",")] if m.strip()]
 
 
