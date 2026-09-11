@@ -393,12 +393,15 @@ def _deliver_slack(fields: dict, rep: dict) -> None:
                                          headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=25) as r:
                 if r.status == 200:
+                    print(f"[chat] answer delivered via response_url to user={fields.get('user_id')}")
                     return
         except Exception:
             pass
     chan = str(fields.get("channel_id", ""))
     if chan:
         _post_slack(chan, rep.get("text", ""), str(rep.get("thread_ts", "") or ""))
+        print(f"[chat] answer delivered via channel fallback chan={chan[:12]} "
+              f"len={len(rep.get('text', ''))}")
 
 
 # ---------------------------------------------------------------- free text ----
