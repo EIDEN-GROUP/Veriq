@@ -242,6 +242,20 @@ def test_report_result_ci_side(monkeypatch):
         os.environ.pop(k, None)
 
 
+def test_slash_ask_defers_within_ack_window(gateway, monkeypatch):
+    client, g = gateway
+    from gateway import chat as gchat
+    gchat._RATE.clear()
+    monkeypatch.setattr(gchat.llm, "chat", lambda msgs, **k: "deferred answer about neon")
+    posted: list = []
+    monkeypatch.setattr(gchat, "_post_slack", lambda ch, tx, ts="": posted.append((ch, tx)))
+    r = sign_form(client, "/slack/slash", {"command": "/ask", "text": "recall my db?",
+                                           "user_id": "U1", "user_name": "u",
+                                           "channel_id": "D5"})
+    assert r.status_code == 200 and "Thinking" in r.json()["text"]   # instant ack (<3s)
+    assert ("D5", "deferred answer about neon") in posted            # bg delivered the truth
+
+
 # ---------- 👾 persistent memory ----------
 def test_memory_roundtrip_and_purge(fresh_store):
     store = fresh_store

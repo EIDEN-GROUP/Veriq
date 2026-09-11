@@ -167,11 +167,20 @@ async def slack_slash(request: Request, background_tasks: BackgroundTasks,
     fields = {k: v[0] for k, v in urllib.parse.parse_qs(body.decode()).items()}
     if not str(fields.get("command", "")).startswith("/"):
         raise HTTPException(400, "not a command")
-    resp = chat.handle_command(store, fields)
+    resp, deferred = chat.run_command(store, fields)
     user_id = str(fields.get("user_id", ""))
-    if user_id:
+    if deferred:
+        background_tasks.add_task(_deferred_safe, deferred)
+    elif user_id:
         background_tasks.add_task(chat.maybe_consolidate, store, user_id)
     return JSONResponse(resp)
+
+
+def _deferred_safe(fn) -> None:
+    try:
+        fn()
+    except Exception as exc:
+        print(f"deferred answer error: {type(exc).__name__}")
 
 
 @app.post("/results")

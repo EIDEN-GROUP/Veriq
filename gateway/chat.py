@@ -351,6 +351,56 @@ def handle_command(store, fields: dict) -> dict:
     return _eph(f":grey_question: Unknown command `/{cmd}` — try /help")
 
 
+def _sub_is_fast(text: str) -> bool:
+    sub = text.strip().lower().split(" ")[0] if text.strip() else ""
+    return sub in ("scan", "audit", "status", "clear", "memory", "forget",
+                   "remember", "keep", "help")
+
+
+def run_command(store, fields: dict) -> tuple[dict, object]:
+    """Route slash with Slack's ~3s ack deadline respected: fast commands answer
+    inline; /ask (NIM-bound) returns '👾 thinking…' now and delivers the real answer
+    from the deferred() closure via response_url (ephemeral update) — private either way."""
+    cmd = str(fields.get("command", "")).lower()
+    text = str(fields.get("text", ""))
+    ask_like = cmd == "/ask" or (cmd == "/veriq" and not _sub_is_fast(text))
+    if not ask_like:
+        return handle_command(store, fields), None
+
+    user_id = str(fields.get("user_id", ""))
+    _CURRENT_USER[0] = user_id
+    if _throttle(user_id):
+        return _eph(":hourglass: You're firing fast — give me a minute."), None
+
+    def deferred():
+        rep = handle_command(store, fields)
+        _deliver_slack(fields, rep)
+
+    ack = {"response_type": "ephemeral",
+           "text": ":brain: Thinking…",
+           "blocks": [{"type": "section", "text": {"type": "mrkdwn",
+                    "text": ":thinking:  👾 consulting memory & evidence…"}}]}
+    return ack, deferred
+
+
+def _deliver_slack(fields: dict, rep: dict) -> None:
+    payload = {"response_type": "ephemeral", "replace_original": True,
+               "text": rep.get("text", ""), "blocks": rep.get("blocks")}
+    url = str(fields.get("response_url", ""))
+    if url.startswith("https://hooks.slack.com/"):
+        try:
+            req = urllib.request.Request(url, data=json.dumps(payload).encode(),
+                                         headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=25) as r:
+                if r.status == 200:
+                    return
+        except Exception:
+            pass
+    chan = str(fields.get("channel_id", ""))
+    if chan:
+        _post_slack(chan, rep.get("text", ""), str(rep.get("thread_ts", "") or ""))
+
+
 # ---------------------------------------------------------------- free text ----
 def _post_slack(channel: str, text: str, thread_ts: str = "") -> None:
     tok = os.environ.get("SLACK_BOT_TOKEN", "")
