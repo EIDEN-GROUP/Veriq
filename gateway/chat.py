@@ -40,9 +40,12 @@ HELP_TXT = (
     "*👾 Veriq commands*  (every /command answer is private — only you see it)\n"
     "• `/scan <owner/repo> [branch] [workflow.yml]` — run a full audit (detect → scan → tests → UI → 👾 analysis; approval via Slack)\n"
     "• `/audit` — alias of `/scan`\n"
-    "• `/ask <question>` — chat with the Veriq engineer; add `<owner/repo>` to use its last audit as context\n"
+    "• `/ask <question>` — chat with the Veriq engineer; add `<owner/repo>` to use its audit history as context\n"
     "• `/status` — the latest audits this Veriq has run for you\n"
-    "• `/clear` — erase my conversational memory of you\n"
+    "• `/remember <note>` — ask me to keep a durable fact (secrets auto-redacted)\n"
+    "• `/memory` — show everything I have stored about you (transcript stats, summary, facts)\n"
+    "• `/clear` — erase chat *transcript* only (summary+facts kept)\n"
+    "• `/forget` — erase ALL memory of me about you, completely\n"
     "• `/help` — this message\n"
     "DM the bot anytime, or ping @veriq in a channel for chat."
 )
@@ -138,6 +141,20 @@ def _default_branch(repo: str) -> str:
     return str(data.get("default_branch", "")) if status == 200 else ""
 
 
+def _memory_context(store, user_id: str) -> list[dict]:
+    """Long-term memory injection: summary + saved facts about this user."""
+    mem = store.memory(user_id)
+    ctx: list[dict] = []
+    parts = []
+    if mem.get("summary"):
+        parts.append(f"CONVERSATION MEMORY SUMMARY: {str(mem['summary'])[:2500]}")
+    if mem.get("facts"):
+        parts.append("SAVED FACTS: " + " | ".join(str(f)[:200] for f in mem["facts"][-20:]))
+    if parts:
+        ctx.append({"role": "system", "content": "\n".join(parts)})
+    return ctx
+
+
 def _ask(store, text: str, user_name: str) -> dict:
     question = text.strip()
     if not question:
@@ -152,12 +169,17 @@ def _ask(store, text: str, user_name: str) -> dict:
         recs = store.recent_results(20)
         repo = recs[0].get("repository") if recs else None
     ctx: list[dict] = [{"role": "system", "content": llm.PERSONA}]
+    ctx += _memory_context(store, _CURRENT_USER[0])
     if repo:
         latest = store.latest_result(repo)
         if latest:
-            ctx.append({"role": "system", "content": "LAST VERIQ AUDIT (authoritative evidence, "
+            ctx.append({"role": "system", "content": "LATEST VERIQ AUDIT (authoritative evidence, "
                         f"verbatim): {json.dumps(latest, default=str)[:4000]}"})
-    ctx += store.chat(_CURRENT_USER[0])[-12:]
+        hist = store.repo_history(repo, 5)
+        if len(hist) > 1:
+            ctx.append({"role": "system", "content": "AUDIT HISTORY (oldest-first, compact): "
+                        + json.dumps(hist[:0:-1], default=str)[:3000]})
+    ctx += store.chat(_CURRENT_USER[0])[-16:]
     ctx.append({"role": "user", "content": f"{question}" + (f"\n(context repo: {repo})" if repo else "")})
     answer = llm.chat(ctx)
     if answer is None:
@@ -167,6 +189,82 @@ def _ask(store, text: str, user_name: str) -> dict:
     if len(answer) > 2900:
         answer = answer[:2890] + "…"
     return _eph(answer, [{"type": "section", "text": {"type": "mrkdwn", "text": answer}}])
+
+
+TRANSCRIPT_CONSOLIDATE_AT = 44  # compress older half once transcript grows past this
+
+
+def maybe_consolidate(store, user_id: str) -> None:
+    """Background task: keep memory durable but bounded — fold the older half of a long
+    transcript into the rolling summary + extract facts (NIM, cheap model pass)."""
+    mem = store.memory(user_id)
+    if len(mem.get("chat", [])) < TRANSCRIPT_CONSOLIDATE_AT:
+        return
+    keep, fold = mem["chat"][-16:], mem["chat"][:-16]
+    prompt = (
+        "Compress chat history into memory. Reply ONLY JSON: "
+        '{"summary": string (<=900 chars, merge prior summary + these turns), '
+        '"facts": [durable short user facts, max 6, omit trivia]}\n'
+        f"PRIOR SUMMARY: {mem.get('summary','')[:2500]}\n"
+        f"PRIOR FACTS: {json.dumps(mem.get('facts', [])[-20:])[:1500]}\n"
+        f"NEW TURNS: {json.dumps(fold)[:14000]}"
+    )
+    out = llm.chat([{"role": "system", "content": "You maintain 👾 Veriq's memory store. JSON "
+                     "only, no prose."},
+                    {"role": "user", "content": prompt}], json_mode=True, max_tokens=600)
+    if not out:
+        # NIM down: drop the middle anyway so memory never explodes; keep facts verbatim.
+        mem["chat"] = keep
+        store.set_memory(user_id, mem)
+        return
+    try:
+        data = json.loads(out[out.index("{"):out.rindex("}") + 1])
+    except (ValueError, json.JSONDecodeError):
+        mem["chat"] = keep
+        store.set_memory(user_id, mem)
+        return
+    if str(data.get("summary", "")).strip():
+        mem["summary"] = str(data["summary"])[:2500]
+    if isinstance(data.get("facts"), list):
+        fresh = [str(f)[:200] for f in data["facts"]][:6]
+        mem["facts"] = (mem.get("facts", []) + [f for f in fresh if f not in mem.get("facts", [])])[-40:]
+        if len(mem["facts"]) > 12:
+            mem["facts"] = mem["facts"][-12:]
+    mem["chat"] = keep
+    store.set_memory(user_id, mem)
+
+
+def _remember_fact(store, user_id: str, text: str) -> dict:
+    note = text.strip()
+    if not note:
+        return _eph(":pencil: Tell me what to keep: `/remember the staging DB is on db-03` "
+                    "(goes through the secret redactor first)")
+    try:
+        from agent.redact import redact_text
+        note = redact_text(note)
+    except ImportError:
+        pass
+    mem = store.memory(user_id)
+    mem["facts"] = (mem.get("facts", []) + [note[:300]])[-40:]
+    store.set_memory(user_id, mem)
+    return _eph(f":brain: Stored. I now keep *{len(mem['facts'])}* facts about you.\n"
+                f"`{note[:250]}`\n(`/memory` reviews it all · `/forget` purges.)")
+
+
+def _show_memory(store, user_id: str) -> dict:
+    mem = store.memory(user_id)
+    n = len(mem.get("chat", []))
+    body = [f":brain:  *What 👾 Veriq remembers about you*  (`{user_id}`)"]
+    body.append(f"• chat transcript kept: *{n} turns* (rolling window, 90-day idle expiry)")
+    summary = str(mem.get("summary") or "").strip()
+    body.append(":memo:  long-term summary:\n```\n" + (summary[:2000] or "— none yet (chat with me /ask and it builds itself) —") + "\n```")
+    facts = mem.get("facts") or []
+    if facts:
+        body.append(":pushpin:  saved facts:")
+        body += [f"  {i+1}. `{str(f)[:200]}`" for i, f in enumerate(facts[-15:])]
+    else:
+        body.append(":pushpin:  no explicit facts yet — add via `/remember <note>`")
+    return _eph("\n".join(body))
 
 
 # helpers for per-request user binding (set by router before calling handlers)
@@ -210,9 +308,20 @@ def handle_command(store, fields: dict) -> dict:
         return _ask(store, text, user_name)
     if cmd == "status":
         return _status(store, user_name, os.environ.get("SLACK_ADMIN_USER_ID", ""), user_id)
+    if cmd in ("remember", "keep"):
+        return _remember_fact(store, user_id, text)
+    if cmd == "memory":
+        return _show_memory(store, user_id)
     if cmd == "clear":
+        mem = store.memory(user_id)
+        mem["chat"] = []
+        store.set_memory(user_id, mem)
+        return _eph(":broom: Transcript cleared — summary and facts kept so I still know the "
+                    "context. Use /forget for a full purge.")
+    if cmd == "forget":
         store.forget(user_id)
-        return _eph(":broom: Memory cleared — I start from zero. (Audit history via `/status` stays.)")
+        return _eph(":wastebasket: Erased. Transcript, summary, facts — all memory of me about "
+                    "you is gone. (Audit results stay as repo records.)")
     if cmd == "help":
         return _eph(HELP_TXT)
     if cmd == "veriq":
@@ -223,8 +332,17 @@ def handle_command(store, fields: dict) -> dict:
         if sub == "status":
             return _status(store, user_name, os.environ.get("SLACK_ADMIN_USER_ID", ""), user_id)
         if sub == "clear":
+            mem = store.memory(user_id)
+            mem["chat"] = []
+            store.set_memory(user_id, mem)
+            return _eph(":broom: Transcript cleared.")
+        if sub in ("remember", "keep") and rest:
+            return _remember_fact(store, user_id, rest)
+        if sub == "memory":
+            return _show_memory(store, user_id)
+        if sub == "forget":
             store.forget(user_id)
-            return _eph(":broom: Cleared.")
+            return _eph(":wastebasket: All memory erased.")
         if sub == "help":
             return _eph(HELP_TXT)
         if not text.strip():

@@ -17,7 +17,7 @@ import os
 import time
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
 from gateway import chat
@@ -124,11 +124,11 @@ def get_decision(audit_id: str) -> dict:
 
 
 @app.post("/slack/events")
-async def slack_events(request: Request,
+async def slack_events(request: Request, background_tasks: BackgroundTasks,
                        x_slack_signature: str = Header(default=""),
                        x_slack_request_timestamp: str = Header(default="")) -> Response:
-    """Events API endpoint: challenge echo, signed event acks (must reply <3s),
-    and 👾 free-text chat for DMs / @veriq mentions."""
+    """Events API endpoint: challenge echo, signed event acks (must reply <3s — so chat
+    answering runs as a background task), and event_id dedupe against Slack retries."""
     body = await request.body()
     challenge = _challenge_from_body(body)
     if challenge is not None:
@@ -141,16 +141,22 @@ async def slack_events(request: Request,
         data = {}
     if isinstance(data, dict) and data.get("type") == "event_callback":
         event = data.get("event") or {}
-        if str(event.get("type", "")) == "message":
-            try:
-                chat.handle_message_event(store, event)  # replies via chat.postMessage; never block the ack
-            except Exception as exc:  # a broken chat must not fail the event pipeline
-                print(f"chat event error: {type(exc).__name__}")
+        eid = str(data.get("event_id") or
+                  f"{event.get('channel')}:{event.get('ts')}:{event.get('user')}")
+        if str(event.get("type", "")) == "message" and not store.event_seen(eid):
+            background_tasks.add_task(_chat_safe, event)  # ack now, answer in threadpool
     return JSONResponse({"ok": True})
 
 
+def _chat_safe(event: dict) -> None:
+    try:
+        chat.handle_message_event(store, event)
+    except Exception as exc:  # a broken chat must never poison the queue
+        print(f"chat event error: {type(exc).__name__}")
+
+
 @app.post("/slack/slash")
-async def slack_slash(request: Request,
+async def slack_slash(request: Request, background_tasks: BackgroundTasks,
                       x_slack_signature: str = Header(default=""),
                       x_slack_request_timestamp: str = Header(default="")) -> Response:
     """Slash commands -> ONLY ephemeral responses (visible to the invoker alone)."""
@@ -161,7 +167,11 @@ async def slack_slash(request: Request,
     fields = {k: v[0] for k, v in urllib.parse.parse_qs(body.decode()).items()}
     if not str(fields.get("command", "")).startswith("/"):
         raise HTTPException(400, "not a command")
-    return JSONResponse(chat.handle_command(store, fields))
+    resp = chat.handle_command(store, fields)
+    user_id = str(fields.get("user_id", ""))
+    if user_id:
+        background_tasks.add_task(chat.maybe_consolidate, store, user_id)
+    return JSONResponse(resp)
 
 
 @app.post("/results")

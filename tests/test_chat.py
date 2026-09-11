@@ -1,6 +1,7 @@
 """Chat-layer tests: privacy (ephemeral), memory, gating, results pipeline, routing."""
 from __future__ import annotations
 
+import json
 import os
 import time
 
@@ -164,7 +165,7 @@ def test_status_privacy_and_grounding(fresh_store, monkeypatch):
     monkeypatch.setattr(gchat.llm, "chat",
                         lambda msgs, **k: cap.append(msgs) or "based on evidence")
     _cmd(store, "/ask", "how is eiden-group/web doing?")
-    assert any("LAST VERIQ AUDIT" in m["content"] for m in cap[-1])       # grounded, not hallucinated
+    assert any("LATEST VERIQ AUDIT" in m["content"] for m in cap[-1])   # grounded, not hallucinated
 
 
 def test_events_routing_dm_mention_and_bot_loop(fresh_store, monkeypatch):
@@ -176,9 +177,12 @@ def test_events_routing_dm_mention_and_bot_loop(fresh_store, monkeypatch):
     monkeypatch.setattr(gchat.llm, "chat", lambda msgs, **k: "quiet answer")
 
     class S:
+        def memory(self, u): return {"chat": [], "summary": "", "facts": []}
+        def set_memory(self, u, m): pass
         def chat(self, u): return []
         def remember(self, u, h): pass
         def latest_result(self, r): return None
+        def repo_history(self, r, n=5): return []
         def recent_results(self, n=25): return []
         def forget(self, u): pass
 
@@ -233,6 +237,95 @@ def test_report_result_ci_side(monkeypatch):
     assert sa.report_result(audit)
     assert seen["url"] == "http://gw.test/results" and seen["tok"] == "rtok"
     assert seen["body"]["severity_counts"] == {"HIGH": 1}
-    assert "findings" not in _json.dumps(seen["body"])                   # counts only, no payload leak
+    assert "findings" not in json.dumps(seen["body"])                   # counts only, no payload leak
     for k in ("APPROVAL_GATEWAY_URL", "GATEWAY_REGISTRATION_TOKEN"):
         os.environ.pop(k, None)
+
+
+# ---------- 👾 persistent memory ----------
+def test_memory_roundtrip_and_purge(fresh_store):
+    store = fresh_store
+    rep = _cmd(store, "/memory")
+    assert rep["response_type"] == "ephemeral"          # fresh user sees empty memory view
+    rep = _cmd(store, "/remember", "staging runs on db-03")
+    assert "staging runs on db-03" in rep["text"]
+    assert store.memory("U1")["facts"] == ["staging runs on db-03"]
+    assert "staging runs on db-03" in _cmd(store, "/memory")["text"]
+    _cmd(store, "/remember", "api_key=hunter2supersecret")     # goes through the redactor
+    assert "hunter2supersecret" not in str(store.memory("U1")["facts"])
+    facts = store.memory("U1")["facts"]
+    _cmd(store, "/clear")
+    assert store.memory("U1")["facts"] == facts                 # /clear keeps facts
+    assert store.chat("U1") == []
+    _cmd(store, "/forget")
+    assert store.memory("U1")["facts"] == [] and store.memory("U1")["chat"] == []
+
+
+def test_ask_grounds_answer_in_memory_and_history(fresh_store, monkeypatch):
+    from gateway import chat as gchat
+    store = fresh_store
+    store.set_memory("U1", {"chat": [], "summary": "user owns eiden-group/web",
+                            "facts": ["staging runs on db-03"]})
+    store.add_result({"repository": "eiden-group/web", "commit": "aaa1111", "triggered_by": "m",
+                      "slack_user": "U1", "score": 88, "cr": 0, "hi": 0, "me": 1, "lo": 0,
+                      "decision": "advisory-only", "fixed": 0, "run_url": "", "reported_at": time.time()})
+    store.add_result({"repository": "eiden-group/web", "commit": "bbb2222", "triggered_by": "m",
+                      "slack_user": "U1", "score": 91, "cr": 0, "hi": 0, "me": 0, "lo": 0,
+                      "decision": "none", "fixed": 0, "run_url": "", "reported_at": time.time() + 1})
+    cap: list = []
+    monkeypatch.setattr(gchat.llm, "chat", lambda msgs, **k: cap.append(msgs) or "grounded answer")
+    rep = _cmd(store, "/ask", "what did we establish about staging eiden-group/web?")
+    assert "grounded" in rep["text"]
+    joined = json.dumps(cap[-1])
+    for needle in ("CONVERSATION MEMORY SUMMARY", "SAVED FACTS", "db-03", "AUDIT HISTORY"):
+        assert needle in joined
+
+
+def test_consolidation_compresses_transcript(fresh_store, monkeypatch):
+    store = fresh_store
+    from gateway import chat as gchat
+    big = [{"role": "user" if i % 2 == 0 else "assistant", "content": f"m{i}"} for i in range(50)]
+    store.set_memory("U1", {"chat": big, "summary": "old summary", "facts": []})
+    seen: dict = {}
+
+    def fake(msgs, json_mode=False, **k):
+        seen["json"] = json_mode
+        return '{"summary": "merged summary", "facts": ["prefers terse answers"]}'
+
+    monkeypatch.setattr(gchat.llm, "chat", fake)
+    gchat.maybe_consolidate(store, "U1")
+    mem = store.memory("U1")
+    assert seen.get("json") is True
+    assert mem["summary"] == "merged summary" and "prefers terse answers" in mem["facts"]
+    assert len(mem["chat"]) == 16 and mem["chat"][0]["content"] == "m34"
+
+
+def test_consolidation_survives_nim_outage(fresh_store, monkeypatch):
+    store = fresh_store
+    from gateway import chat as gchat
+    big = [{"role": "user", "content": f"m{i}"} for i in range(50)]
+    store.set_memory("U1", {"chat": big, "summary": "keep", "facts": ["keep fact"]})
+    monkeypatch.setattr(gchat.llm, "chat", lambda msgs, **k: None)
+    gchat.maybe_consolidate(store, "U1")                     # never raises, bounded anyway
+    mem = store.memory("U1")
+    assert len(mem["chat"]) == 16 and mem["summary"] == "keep" and mem["facts"] == ["keep fact"]
+    gchat.maybe_consolidate(store, "U1")                     # below threshold now -> no-op
+    assert store.memory("U1")["chat"] == mem["chat"]
+
+
+def test_store_semantics():
+    from gateway.store import MemoryStore, UpstashStore
+    s = MemoryStore()
+    assert s.memory("x") == {"chat": [], "summary": "", "facts": []}
+    s.set_memory("x", {"chat": [{"role": "user", "content": "hi"}] * 90, "summary": "sm",
+                       "facts": ["a"]})
+    assert len(s.memory("x")["chat"]) == 60                             # transcript capped
+    assert not s.event_seen("e1") and s.event_seen("e1")                # 1st new, then dup
+    assert not s.event_seen("")                                         # empty id never dupes
+    for i in range(35):                                                 # history bounded at 30
+        s.add_result({"repository": "o/r", "reported_at": time.time() + i, "commit": f"c{i}"})
+    assert len(s.repo_history("o/r", 99)) == 30
+    assert s.repo_history("o/r")[0]["commit"] == "c34"                  # newest first
+    assert s.latest_result("o/r")["commit"] == "c34"
+    import inspect
+    assert "event_seen" in dict(inspect.getmembers(UpstashStore, inspect.isfunction))

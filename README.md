@@ -185,12 +185,26 @@ Talk to Veriq straight from Slack — the **gateway serves it**, no extra deploy
 |---|---|---|
 | `/scan owner/repo [branch] [workflow.yml]` | triggers a full Veriq audit on that repo (detect → scans → tests → Playwright → 👾 analysis → approval DM) | `GITHUB_API_TOKEN` + target repo has a caller workflow |
 | `/audit` | alias of `/scan` | |
-| `/ask <question> [owner/repo]` | NIM chat grounded in the repo's last audit (`/scan` results are stored) | `NIM_API_KEY` |
+| `/ask <question> [owner/repo]` | NIM chat grounded in memory + the repo's stored audits (a repo token adds its audit history) | `NIM_API_KEY` |
 | `/status` | your recent audits: score, severities, decision, fixes | — |
-| `/clear` | wipes 👾's conversational memory of **you** | — |
+| `/remember <note>` | store a durable fact about you/project — passed through the **secret redactor** first | — |
+| `/memory` | transparency: show everything 👾 stores for you (transcript stats, summary, facts) | — |
+| `/clear` | erase chat **transcript** only (summary + facts survive for continuity) | — |
+| `/forget` | purge *all* memory of you — transcript, summary, facts | — |
 | `/help` | usage | — |
 | `/veriq <anything>` | catch-all: routes by first word (`veriq scan org/r`, `veriq status`, anything else → ask) | ask needs NIM |
-| DM the bot / `@veriq …` in a channel | live thread replies, remembers context per user until `/clear` or 2 h idle | bot token + Events |
+| DM the bot / `@veriq …` in a channel | live thread replies with full memory, until `/clear`/`/forget` | bot token + Events |
+| `/remember` `/memory` `/forget` | explicit memory control (facts redacted at rest) | — |
+
+**Memory model:** 👾 keeps a rolling transcript (60 turns, capped), and once it grows
+it background-compresses the older half into a durable **summary + extracted facts**
+(one NIM pass, JSON; fails safe by trimming without the LLM). Everything persists per
+user for 90 days — so "what did we decide about staging?" works tomorrow. `/ask`
+context = persona + your memory + the target repo's latest audit **and history**
+(every CI report is stored per repo, last 30). Stored facts pass through the
+redactor; `/forget` deletes the memory key entirely (on Upstash too). Slack events
+are acked immediately (background answering) and deduped by `event_id` — Slack's
+own retries can never double-reply.
 
 **Privacy by design:** every `/command` reply is `response_type: ephemeral` —
 visible only to the person who typed it, even in #general. Free-text chat replies
@@ -200,7 +214,8 @@ Lock `/scan` down with gateway env `VERIQ_ALLOWED_REPOS=owner/a,owner/b` if need
 
 **Slack app wiring (5 min):**
 1. *Slash Commands* → create each command (`/scan`, `/audit`, `/ask`, `/status`,
-   `/help`, `/clear`, `/veriq`), Request URL: `https://veriq.eiden-group.com/slack/slash`.
+   `/help`, `/clear`, `/remember`, `/memory`, `/forget`, `/veriq`), Request URL:
+   `https://veriq.eiden-group.com/slack/slash`.
 2. *Event Subscriptions* → Enable → Request URL `https://veriq.eiden-group.com/slack/events`
    (already verified) → Subscribe bot events: `message.im`, `app_mentions:read`
    (+ `message.channels` only if you want @mention replies in channels).
