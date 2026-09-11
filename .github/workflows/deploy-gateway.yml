@@ -43,7 +43,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
-          source: "gateway/,docker-compose.yml,Caddyfile,requirements-gateway.txt"
+          source: "gateway/,agent/redact.py,agent/__init__.py,docker-compose.yml,Caddyfile,requirements-gateway.txt"
           target: "~/veriq-gateway"
 
       - name: Install Docker, configure and start gateway
