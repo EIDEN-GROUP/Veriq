@@ -55,4 +55,10 @@ def notify_audit(audit: dict, admin_id: str = "", artifacts_dir: str | Path = "a
         upsert_bot_comment(audit["repository"], audit.get("pr_number"), comment_body(audit))
     except Exception:
         pass
+    # 4) Tell the gateway the audit is done (powers /status + grounded /ask chat)
+    try:
+        from slack.approval import report_result
+        report_result(audit)
+    except Exception:
+        pass
     return receipt

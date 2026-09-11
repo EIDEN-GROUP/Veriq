@@ -20,6 +20,7 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
+from gateway import chat
 from gateway.store import get_store
 
 app = FastAPI(title="veriq-approval-gateway")
@@ -126,15 +127,75 @@ def get_decision(audit_id: str) -> dict:
 async def slack_events(request: Request,
                        x_slack_signature: str = Header(default=""),
                        x_slack_request_timestamp: str = Header(default="")) -> Response:
-    """Events-API-shaped endpoint (some Slack screens ask for /slack/events).
-    Echoes url_verification challenges; acks signed event callbacks; never mutates state."""
+    """Events API endpoint: challenge echo, signed event acks (must reply <3s),
+    and 👾 free-text chat for DMs / @veriq mentions."""
     body = await request.body()
     challenge = _challenge_from_body(body)
     if challenge is not None:
         return PlainTextResponse(challenge)
     if not _signing_secret() or not verify_slack_signature(body, x_slack_request_timestamp, x_slack_signature):
         raise HTTPException(401, "bad slack signature")
-    return JSONResponse({"ok": True})  # ack to prevent Slack retries; we use no events yet
+    try:
+        data = json.loads(body.decode())
+    except ValueError:
+        data = {}
+    if isinstance(data, dict) and data.get("type") == "event_callback":
+        event = data.get("event") or {}
+        if str(event.get("type", "")) == "message":
+            try:
+                chat.handle_message_event(store, event)  # replies via chat.postMessage; never block the ack
+            except Exception as exc:  # a broken chat must not fail the event pipeline
+                print(f"chat event error: {type(exc).__name__}")
+    return JSONResponse({"ok": True})
+
+
+@app.post("/slack/slash")
+async def slack_slash(request: Request,
+                      x_slack_signature: str = Header(default=""),
+                      x_slack_request_timestamp: str = Header(default="")) -> Response:
+    """Slash commands -> ONLY ephemeral responses (visible to the invoker alone)."""
+    body = await request.body()
+    if not _signing_secret() or not verify_slack_signature(body, x_slack_request_timestamp, x_slack_signature):
+        raise HTTPException(401, "bad slack signature")
+    import urllib.parse
+    fields = {k: v[0] for k, v in urllib.parse.parse_qs(body.decode()).items()}
+    if not str(fields.get("command", "")).startswith("/"):
+        raise HTTPException(400, "not a command")
+    return JSONResponse(chat.handle_command(store, fields))
+
+
+@app.post("/results")
+def report_result(payload: dict, x_veriq_token: str = Header(default="")) -> dict:
+    """CI reports finished audits here (X-Veriq-Token gated like /audits) so /status
+    and /ask can use them. Shape-restricted: never store anything else."""
+    reg_token = os.environ.get("GATEWAY_REGISTRATION_TOKEN", "")
+    if reg_token and not hmac.compare_digest(x_veriq_token, reg_token):
+        raise HTTPException(401, "bad registration token")
+    repo = str(payload.get("repository") or "")
+    if "/" not in repo:
+        raise HTTPException(400, "missing repository")
+    s = payload.get("severity_counts") or {}
+    fx = payload.get("fixes") or {}
+    ap = payload.get("approval") or {}
+    store.add_result({
+        "audit_id": str(payload.get("audit_id", ""))[:64],
+        "repository": repo[:120],
+        "commit": str(payload.get("commit", ""))[:40],
+        "pr_number": payload.get("pr_number"),
+        "triggered_by": str(payload.get("triggered_by", ""))[:80],
+        "slack_user": str(payload.get("slack_user", ""))[:40],
+        "score": max(0, min(100, int(payload.get("overall_score", 0) or 0))),
+        "cr": int(s.get("CRITICAL", 0) or 0), "hi": int(s.get("HIGH", 0) or 0),
+        "me": int(s.get("MEDIUM", 0) or 0), "lo": int(s.get("LOW", 0) or 0),
+        "tests": str((payload.get("tests") or {}).get("status", ""))[:16],
+        "build": str((payload.get("build") or {}).get("status", ""))[:16],
+        "security": str((payload.get("security") or {}).get("status", ""))[:16],
+        "decision": str(ap.get("decision", ""))[:40],
+        "fixed": int(fx.get("fixed", 0) or 0),
+        "run_url": str(payload.get("run_url", ""))[:200],
+        "reported_at": time.time(),
+    })
+    return {"ok": True}
 
 
 @app.post("/slack/actions")

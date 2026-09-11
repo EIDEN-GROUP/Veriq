@@ -8,6 +8,8 @@
 
 Key layout:  veriq:pending:<audit_id>   (TTL = approval window)
              veriq:decision:<audit_id>  (TTL = 24h, so late polls still see the outcome)
+             veriq:chat:<user_id>       (rolling chat context, TTL 2h)
+             veriq:result:<repo>        + veriq:results (recent audits reported by CI, TTL 7d)
 """
 from __future__ import annotations
 
@@ -18,13 +20,47 @@ import urllib.request
 
 PENDING_PREFIX = "veriq:pending:"
 DECISION_PREFIX = "veriq:decision:"
+CHAT_PREFIX = "veriq:chat:"
+RESULT_PREFIX = "veriq:result:"
+RESULTS_LIST = "veriq:results"
 DECISION_TTL_S = 86_400
+CHAT_TTL_S = 7_200
+RESULT_TTL_S = 7 * 86_400
 
 
 class MemoryStore:
     def __init__(self) -> None:
         self._pending: dict[str, dict] = {}
         self._decisions: dict[str, dict] = {}
+        self._chat: dict[str, tuple[list, float]] = {}
+        self._results: list[dict] = []
+        self._latest: dict[str, dict] = {}
+
+    # ---- chat context (rolling per-user, TTL) ----
+    def chat(self, user_id: str) -> list[dict]:
+        item = self._chat.get(user_id)
+        if not item or time.time() > item[1]:
+            return []
+        return item[0]
+
+    def remember(self, user_id: str, messages: list[dict]) -> None:
+        self._chat[user_id] = (messages[-24:], time.time() + CHAT_TTL_S)
+
+    def forget(self, user_id: str) -> None:
+        self._chat.pop(user_id, None)
+
+    # ---- audit results reported by CI ----
+    def add_result(self, record: dict) -> None:
+        self._results.insert(0, record)
+        del self._results[100:]
+        self._latest[record["repository"]] = record
+
+    def recent_results(self, limit: int = 10) -> list[dict]:
+        return list(self._results[:limit])
+
+    def latest_result(self, repo: str) -> dict | None:
+        rec = self._latest.get(repo)
+        return rec if rec and time.time() - rec.get("reported_at", 0) < RESULT_TTL_S else None
 
     def set_pending(self, audit_id: str, rec: dict) -> None:
         self._pending[audit_id] = rec
@@ -44,6 +80,9 @@ class MemoryStore:
     def clear_all(self) -> None:
         self._pending.clear()
         self._decisions.clear()
+        self._chat.clear()
+        self._results.clear()
+        self._latest.clear()
 
 
 class UpstashStore:
@@ -80,6 +119,44 @@ class UpstashStore:
 
     def clear_decision(self, audit_id: str) -> None:
         self._cmd("DEL", DECISION_PREFIX + audit_id)
+
+    # ---- chat / results over Redis (same interface as MemoryStore) ----
+    def chat(self, user_id: str) -> list[dict]:
+        raw = self._cmd("GET", CHAT_PREFIX + user_id)
+        if not raw:
+            return []
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return []
+
+    def remember(self, user_id: str, messages: list[dict]) -> None:
+        self._cmd("SET", CHAT_PREFIX + user_id,
+                  json.dumps(messages[-24:]), "EX", CHAT_TTL_S)
+
+    def forget(self, user_id: str) -> None:
+        self._cmd("DEL", CHAT_PREFIX + user_id)
+
+    def add_result(self, record: dict) -> None:
+        key = RESULT_PREFIX + record["repository"].replace("/", "+")
+        self._cmd("SET", key, json.dumps(record), "EX", RESULT_TTL_S)
+        self._cmd("LPUSH", RESULTS_LIST, json.dumps(record))
+        self._cmd("LTRIM", RESULTS_LIST, 0, 99)
+        self._cmd("EXPIRE", RESULTS_LIST, RESULT_TTL_S)
+
+    def recent_results(self, limit: int = 10) -> list[dict]:
+        raw = self._cmd("LRANGE", RESULTS_LIST, 0, limit - 1) or []
+        out = []
+        for item in raw:
+            try:
+                out.append(json.loads(item))
+            except ValueError:
+                continue
+        return out
+
+    def latest_result(self, repo: str) -> dict | None:
+        raw = self._cmd("GET", RESULT_PREFIX + repo.replace("/", "+"))
+        return json.loads(raw) if raw else None
 
     def clear_all(self) -> None:
         cursor = "0"

@@ -177,6 +177,38 @@ Do you want the AI agent to fix them?
 [🟢 Allow AI to fix]  [🔴 Do not allow AI to fix]
 ```
 
+## 6b. Chat with 👾 (slash commands + optional live chat)
+
+Talk to Veriq straight from Slack — the **gateway serves it**, no extra deploy.
+
+| Command | What it does | Needs |
+|---|---|---|
+| `/scan owner/repo [branch] [workflow.yml]` | triggers a full Veriq audit on that repo (detect → scans → tests → Playwright → 👾 analysis → approval DM) | `GITHUB_API_TOKEN` + target repo has a caller workflow |
+| `/audit` | alias of `/scan` | |
+| `/ask <question> [owner/repo]` | NIM chat grounded in the repo's last audit (`/scan` results are stored) | `NIM_API_KEY` |
+| `/status` | your recent audits: score, severities, decision, fixes | — |
+| `/clear` | wipes 👾's conversational memory of **you** | — |
+| `/help` | usage | — |
+| `/veriq <anything>` | catch-all: routes by first word (`veriq scan org/r`, `veriq status`, anything else → ask) | ask needs NIM |
+| DM the bot / `@veriq …` in a channel | live thread replies, remembers context per user until `/clear` or 2 h idle | bot token + Events |
+
+**Privacy by design:** every `/command` reply is `response_type: ephemeral` —
+visible only to the person who typed it, even in #general. Free-text chat replies
+happen in-thread (DM or your own mention), never broadcasting into channels.
+Per-user rate limit: 20 interactions/min, then a polite slowdown.
+Lock `/scan` down with gateway env `VERIQ_ALLOWED_REPOS=owner/a,owner/b` if needed.
+
+**Slack app wiring (5 min):**
+1. *Slash Commands* → create each command (`/scan`, `/audit`, `/ask`, `/status`,
+   `/help`, `/clear`, `/veriq`), Request URL: `https://veriq.eiden-group.com/slack/slash`.
+2. *Event Subscriptions* → Enable → Request URL `https://veriq.eiden-group.com/slack/events`
+   (already verified) → Subscribe bot events: `message.im`, `app_mentions:read`
+   (+ `message.channels` only if you want @mention replies in channels).
+3. Add optional gateway secrets (deploy ships them automatically):
+   `NIM_API_KEY`, `SLACK_BOT_TOKEN`, `GITHUB_API_TOKEN` (fine-grained PAT:
+   *Actions: read&write* + *Contents: read&write* on the repos you'll scan).
+4. Missing pieces degrade with in-message instructions, never errors.
+
 ## 7. Supported frameworks & deterministic checks
 
 Phase 1 (full): Node (npm/yarn/pnpm/bun via lockfiles + `package.json` script detection),

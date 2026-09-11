@@ -63,6 +63,42 @@ def mark_working(audit: dict) -> bool:
                           "🔧 Veriq is applying approved fixes…", working_blocks(audit))
 
 
+def report_result(audit: dict) -> bool:
+    """Best-effort push of the final audit summary to the gateway (/results), so
+    Slack chat (/status, /ask "why did it fail?") can reference real outcomes."""
+    gateway = os.environ.get("APPROVAL_GATEWAY_URL", "").rstrip("/")
+    if not gateway:
+        return False
+    from agent.redact import redact_evidence_blob
+    payload = redact_evidence_blob({
+        "audit_id": audit["audit_id"], "repository": audit["repository"],
+        "commit": audit.get("commit", ""), "pr_number": audit.get("pr_number"),
+        "triggered_by": audit.get("triggered_by", ""), "slack_user": audit.get("slack_user"),
+        "overall_score": audit.get("overall_score", 0),
+        "severity_counts": audit.get("severity_counts", {}),
+        "tests": {"status": (audit.get("tests") or {}).get("status")},
+        "build": {"status": (audit.get("build") or {}).get("status")},
+        "security": {"status": (audit.get("security") or {}).get("status")},
+        "approval": {"requested": audit.get("approval", {}).get("requested", False),
+                     "decision": audit.get("approval", {}).get("decision")},
+        "fixes": {"identified": audit.get("fixes", {}).get("identified", 0),
+                  "fixed": audit.get("fixes", {}).get("fixed", 0),
+                  "advisory": audit.get("fixes", {}).get("advisory", [])},
+        "run_url": os.environ.get("GITHUB_RUN_URL", ""),
+    })
+    headers = {"Content-Type": "application/json"}
+    reg = os.environ.get("GATEWAY_REGISTRATION_TOKEN", "")
+    if reg:
+        headers["X-Veriq-Token"] = reg
+    try:
+        req = urllib.request.Request(f"{gateway}/results", data=json.dumps(payload).encode(),
+                                     headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return bool(json.loads(r.read().decode()).get("ok", False))
+    except Exception:
+        return False
+
+
 def wait_for_decision(audit_id: str, timeout_minutes: int = 30, poll_s: int = 10) -> dict:
     gateway = os.environ.get("APPROVAL_GATEWAY_URL", "").rstrip("/")
     if not gateway:

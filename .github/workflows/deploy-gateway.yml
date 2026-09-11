@@ -53,7 +53,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
-          envs: VPS_DOMAIN,SLACK_SIGNING_SECRET,SLACK_ADMIN_USER_ID,SLACK_USER_MAP,GATEWAY_REGISTRATION_TOKEN
+          envs: VPS_DOMAIN,SLACK_SIGNING_SECRET,SLACK_ADMIN_USER_ID,SLACK_USER_MAP,GATEWAY_REGISTRATION_TOKEN,NIM_API_KEY,NIM_BASE_URL,NIM_MODEL,SLACK_BOT_TOKEN,GITHUB_API_TOKEN
           script: |
             set -e
             cd ~/veriq-gateway
@@ -85,6 +85,12 @@ jobs:
             if [ -n "$GATEWAY_REGISTRATION_TOKEN" ]; then
               printf 'GATEWAY_REGISTRATION_TOKEN=%s\n' "$GATEWAY_REGISTRATION_TOKEN" >> .gateway.env
             fi
+            # Optional chat/scan capabilities — unset is fine (chat answers degrade with hints).
+            if [ -n "$NIM_API_KEY" ]; then printf 'NIM_API_KEY=%s\n' "$NIM_API_KEY" >> .gateway.env; fi
+            if [ -n "$NIM_BASE_URL" ]; then printf 'NIM_BASE_URL=%s\n' "$NIM_BASE_URL" >> .gateway.env; fi
+            if [ -n "$NIM_MODEL" ]; then printf 'NIM_MODEL=%s\n' "$NIM_MODEL" >> .gateway.env; fi
+            if [ -n "$SLACK_BOT_TOKEN" ]; then printf 'SLACK_BOT_TOKEN=%s\n' "$SLACK_BOT_TOKEN" >> .gateway.env; fi
+            if [ -n "$GITHUB_API_TOKEN" ]; then printf 'GITHUB_API_TOKEN=%s\n' "$GITHUB_API_TOKEN" >> .gateway.env; fi
             chmod 600 .gateway.env
             # Fresh Caddyfile is re-copied every deploy, so this substitution always matches.
             sed -i "s|veriq-gateway\.example\.com|$VPS_DOMAIN|" Caddyfile
@@ -107,3 +113,7 @@ jobs:
           SLACK_ADMIN_USER_ID: ${{ secrets.SLACK_ADMIN_USER_ID }}
           SLACK_USER_MAP: ${{ secrets.SLACK_USER_MAP }}
           GATEWAY_REGISTRATION_TOKEN: ${{ secrets.GATEWAY_REGISTRATION_TOKEN }}
+          NIM_API_KEY: ${{ secrets.NIM_API_KEY }}
+          NIM_MODEL: ${{ secrets.NIM_MODEL }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          GITHUB_API_TOKEN: ${{ secrets.GITHUB_API_TOKEN }}
